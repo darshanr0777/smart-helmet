@@ -668,12 +668,15 @@ function setupEventListeners() {
 // Supabase Integration Handlers
 // ============================================================================
 function initLocalStorageConfig() {
-  const savedUrl = localStorage.getItem('mineguard_supabase_url');
-  const savedKey = localStorage.getItem('mineguard_supabase_key');
-  const savedSource = localStorage.getItem('mineguard_data_source') || 'sim';
+  const defaultUrl = 'https://srkowkuclkimtwhkiutg.supabase.co';
+  const defaultKey = 'sb_publishable_kWHQSFzZEblEqWzlTwZuvg_ISGBBUCu';
 
-  if (savedUrl) document.getElementById('supabaseUrlInput').value = savedUrl;
-  if (savedKey) document.getElementById('supabaseAnonKeyInput').value = savedKey;
+  const savedUrl = localStorage.getItem('mineguard_supabase_url') || defaultUrl;
+  const savedKey = localStorage.getItem('mineguard_supabase_key') || defaultKey;
+  const savedSource = localStorage.getItem('mineguard_data_source') || 'supabase';
+
+  document.getElementById('supabaseUrlInput').value = savedUrl;
+  document.getElementById('supabaseAnonKeyInput').value = savedKey;
   document.getElementById('dataSourceSelect').value = savedSource;
 
   state.dataSource = savedSource;

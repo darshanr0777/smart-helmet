@@ -33,8 +33,8 @@ const char* WIFI_SSID     = "YOUR_HOTSPOT_NAME";       // Replace with your Hots
 const char* WIFI_PASSWORD = "YOUR_HOTSPOT_PASSWORD";   // Replace with your Hotspot Password
 
 // Supabase REST Endpoint: https://<PROJECT_ID>.supabase.co/rest/v1/helmet_telemetry
-const char* SUPABASE_URL  = "https://YOUR_PROJECT_ID.supabase.co/rest/v1/helmet_telemetry";
-const char* SUPABASE_KEY  = "YOUR_SUPABASE_ANON_KEY";  // Replace with your Anon API key
+const char* SUPABASE_URL  = "https://srkowkuclkimtwhkiutg.supabase.co/rest/v1/helmet_telemetry";
+const char* SUPABASE_KEY  = "sb_publishable_kWHQSFzZEblEqWzlTwZuvg_ISGBBUCu";
 
 const char* WORKER_ID     = "W-101";                   // Unique Helmet ID
 
