@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
   <!-- Leaflet CSS for GPS & Geofencing Map -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <!-- Leaflet.draw — Zone drawing plugin -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
   
@@ -311,7 +311,8 @@
            TAB 2: LIVE MAP (Interactive OpenStreetMap + Geofence Polygon Drawing)
            ==================================================================== -->
       <section class="tab-pane" id="tab-live-map">
-        <div class="map-layout-grid">
+        <div id="mapSlotLive">
+          <div class="map-layout-grid" id="interactiveMapSection">
           <!-- Main Map Card -->
           <div class="panel-card map-panel">
             <div class="panel-header">
@@ -380,7 +381,8 @@
               </div>
             </div>
           </div>
-        </div>
+        </div><!-- end interactiveMapSection -->
+        </div><!-- end mapSlotLive -->
       </section>
 
       <!-- ====================================================================
@@ -515,14 +517,15 @@
       </section>
 
       <!-- ====================================================================
-           TAB 4: ZONES (Zone overview table)
+           TAB 4: ZONES (Zone Overview & Management)
            ==================================================================== -->
       <section class="tab-pane" id="tab-zones">
-        <div class="panel-card">
+        <div id="mapSlotZones"></div>
+        <div class="panel-card" style="margin-top:1.25rem">
           <div class="panel-header">
-            <h3><i class="fa-solid fa-shield-halved"></i> Mine Safety Geofence Zones</h3>
-            <button class="primary-btn" onclick="document.getElementById('navItemLiveMap').click(); document.getElementById('startDrawPolygonBtn').click();">
-              <i class="fa-solid fa-plus"></i> Create New Zone on Map
+            <h3><i class="fa-solid fa-shield-halved"></i> Active Mine Safety Geofence Registry</h3>
+            <button class="small-btn btn-draw" onclick="document.getElementById('startDrawPolygonBtn').click();">
+              <i class="fa-solid fa-draw-polygon"></i> Draw New Zone
             </button>
           </div>
           <div class="panel-body">
@@ -727,7 +730,7 @@
   </div>
 
   <!-- Leaflet Scripts -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
   <!-- Main Application Logic -->
   <script src="app.js"></script>

@@ -95,8 +95,12 @@ document.addEventListener('DOMContentLoaded', () => {
 // Leaflet GPS Map & Geofencing Setup (OpenStreetMap)
 // ============================================================================
 function initLeafletMap() {
+  if (typeof L === 'undefined') {
+    console.warn('Leaflet library is still loading or unavailable.');
+    return;
+  }
   const mapElement = document.getElementById('mineMap');
-  if (!mapElement) return;
+  if (!mapElement || mapInstance) return;
 
   // Initialize map
   mapInstance = L.map('mineMap', {
@@ -105,13 +109,22 @@ function initLeafletMap() {
     zoomControl: true
   });
 
-  // OpenStreetMap via CartoDB Dark Matter (100% OSM data, open-source tiles)
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  // OpenStreetMap via CartoDB Dark Matter with standard OSM fallback
+  const tileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
     attribution:
       '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank">CARTO</a>',
     subdomains: 'abcd',
     maxZoom: 20
-  }).addTo(mapInstance);
+  });
+
+  tileLayer.on('tileerror', function () {
+    if (!tileLayer._hasFallenBack) {
+      tileLayer._hasFallenBack = true;
+      tileLayer.setUrl('https://tile.openstreetmap.org/{z}/{x}/{y}.png');
+    }
+  });
+
+  tileLayer.addTo(mapInstance);
 
   // FeatureGroup to hold all Leaflet.draw layers
   drawnItems = new L.FeatureGroup();
@@ -1121,6 +1134,8 @@ function renderZoneList() {
     `;
     list.appendChild(item);
   });
+
+  renderZonesTable();
 }
 
 /** Persist zones to localStorage (without layerRef — that's live only) */
@@ -1314,11 +1329,21 @@ function initTabNavigation() {
         viewTitle.textContent = titles[targetTabId];
       }
 
-      // Invalidate map size so Leaflet recalculates correctly when opening Live Map
-      if (targetTabId === 'tab-live-map' && mapInstance) {
-        setTimeout(() => {
-          mapInstance.invalidateSize();
-        }, 150);
+      // Move interactive map section between Live Map and Zones seamlessly
+      const mapSection = document.getElementById('interactiveMapSection');
+      if (targetTabId === 'tab-live-map') {
+        const slotLive = document.getElementById('mapSlotLive');
+        if (mapSection && slotLive && mapSection.parentElement !== slotLive) {
+          slotLive.appendChild(mapSection);
+        }
+        ensureMapReady();
+      } else if (targetTabId === 'tab-zones') {
+        const slotZones = document.getElementById('mapSlotZones');
+        if (mapSection && slotZones && mapSection.parentElement !== slotZones) {
+          slotZones.appendChild(mapSection);
+        }
+        renderZonesTable();
+        ensureMapReady();
       }
 
       // Close mobile drawer if opened
@@ -1351,4 +1376,72 @@ function initTabNavigation() {
       }
     });
   }
+}
+
+/** Ensure Leaflet Map has initialized and properly resized upon tab activation */
+function ensureMapReady() {
+  if (typeof L === 'undefined') return;
+  if (!mapInstance) {
+    initLeafletMap();
+  }
+  setTimeout(() => {
+    if (mapInstance) {
+      mapInstance.invalidateSize();
+      if (workerMarker) {
+        mapInstance.setView(workerMarker.getLatLng(), mapInstance.getZoom() || 17);
+      }
+    }
+  }, 100);
+  setTimeout(() => {
+    if (mapInstance) {
+      mapInstance.invalidateSize();
+    }
+  }, 350);
+}
+
+/** Populate Zones Table with default and custom drawn geofences */
+function renderZonesTable() {
+  const tbody = document.getElementById('zonesTableBody');
+  if (!tbody) return;
+
+  const defaultRows = `
+    <tr>
+      <td><strong>Safe Mine Sector A</strong></td>
+      <td><span class="badge badge-safe">Safe Operating Area</span></td>
+      <td>Circle (180m radius)</td>
+      <td>None (Authorized)</td>
+      <td><span class="chip chip-sm" style="background:rgba(255,255,255,0.06);padding:0.15rem 0.45rem;border-radius:4px;font-size:0.7rem">System Default</span></td>
+    </tr>
+    <tr>
+      <td><strong>Deep Mine Toxic Shaft</strong></td>
+      <td><span class="badge badge-danger">Restricted Hazard</span></td>
+      <td>Circle (70m radius)</td>
+      <td>Immediate Siren & Alarm</td>
+      <td><span class="chip chip-sm" style="background:rgba(255,255,255,0.06);padding:0.15rem 0.45rem;border-radius:4px;font-size:0.7rem">System Default</span></td>
+    </tr>
+  `;
+
+  const customRows = drawnZones.map(z => {
+    const badgeCls = z.type === 'restricted' ? 'badge-danger' : (z.type === 'warning' ? 'badge-warning' : 'badge-safe');
+    const label = z.type === 'restricted' ? 'Restricted Hazard' : (z.type === 'warning' ? 'Caution Warning' : 'Safe Zone');
+    const breachAction = z.type === 'restricted' ? 'Immediate Siren & Emergency Banner' : (z.type === 'warning' ? 'Caution Advisory' : 'None (Safe Area)');
+    return `
+      <tr>
+        <td><strong>${z.name}</strong></td>
+        <td><span class="badge ${badgeCls}">${label}</span></td>
+        <td>Polygon (${z.latlngs.length} vertices)</td>
+        <td>${breachAction}</td>
+        <td>
+          <button class="small-btn" onclick="zoomToZone('${z.id}')" title="Zoom to zone" style="padding:0.2rem 0.5rem;font-size:0.75rem">
+            <i class="fa-solid fa-magnifying-glass-location"></i> View
+          </button>
+          <button class="small-btn" onclick="deleteZone('${z.id}')" title="Delete zone" style="padding:0.2rem 0.5rem;font-size:0.75rem;margin-left:4px;color:var(--status-danger)">
+            <i class="fa-solid fa-trash"></i>
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  tbody.innerHTML = defaultRows + customRows;
 }
