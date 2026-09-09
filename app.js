@@ -22,9 +22,10 @@ const state = {
   telemetry: {
     temp: 27.5,
     humidity: 62.0,
-    mq3_gas: 0.05,     // mg/L (Flammable / Alcohol / Hydrocarbons)
-    mq7_co: 14,        // PPM Carbon Monoxide
-    mq135_air: 78,     // PPM Toxic Gas / Air Quality Index
+    mq2_smoke: 85,     // PPM — MQ-2 Smoke / LPG / Flammable Gas
+    mq7_co: 14,        // PPM — MQ-7 Carbon Monoxide
+    mq135_air: 78,     // PPM — MQ-135 Air Quality / NH3 / NOx
+    mq3_gas: 0.05,     // mg/L — MQ-3 legacy (used by smart_helmet_esp32.ino)
     lat: 12.971598,
     lng: 77.594566,
     alt: 922,
@@ -37,18 +38,20 @@ const state = {
     alertLevel: 'SAFE'     // 'SAFE', 'WARNING', 'DANGER'
   },
 
-  // Threshold Configurations
+  // Threshold Configurations (match ESP32 firmware values)
   thresholds: {
-    tempMax: 40.0,     // °C — alert threshold (matches ESP32 firmware)
+    tempMax: 40.0,      // °C
     tempWarning: 35.0,
-    mq7Danger: 50,     // PPM Carbon Monoxide
+    mq2Danger: 400,     // PPM — MQ-2 Smoke / LPG danger
+    mq2Warning: 200,
+    mq7Danger: 50,      // PPM — MQ-7 CO (OSHA PEL)
     mq7Warning: 30,
-    mq135Danger: 250,  // PPM Air Quality / Harmful Gases
+    mq135Danger: 250,   // PPM — MQ-135 toxic air
     mq135Warning: 150,
-    mq3Danger: 0.40,   // mg/L Flammable gas
+    mq3Danger: 0.40,    // mg/L — MQ-3 legacy
     mq3Warning: 0.20,
-    inactivityTimeout: 60, // 60 seconds of zero movement
-    fallThresholdG: 2.80   // G-Force impact threshold
+    inactivityTimeout: 60, // seconds
+    fallThresholdG: 2.80   // G-Force
   }
 };
 
@@ -409,19 +412,19 @@ function updateDashboardUI() {
     mq135Progress.className = 'progress-fill fill-safe';
   }
 
-  // 4. Gas Array: MQ-3 (Alcohol / Flammable vapors)
-  document.getElementById('mq3Val').textContent = d.mq3_gas.toFixed(2);
+  // 4. Gas Array: MQ-2 (Smoke / LPG / Flammable Gas — PPM)
+  document.getElementById('mq3Val').textContent = Math.round(d.mq2_smoke);
   const mq3Progress = document.getElementById('mq3Progress');
   const mq3Badge = document.getElementById('mq3Badge');
-  const mq3Percent = Math.min(100, (d.mq3_gas / 0.8) * 100);
+  const mq3Percent = Math.min(100, (d.mq2_smoke / 800) * 100);  // 800 PPM = full scale
   mq3Progress.style.width = mq3Percent + '%';
 
-  if (d.mq3_gas >= state.thresholds.mq3Danger) {
-    mq3Badge.textContent = 'FLAMMABLE RISK';
+  if (d.mq2_smoke >= state.thresholds.mq2Danger) {
+    mq3Badge.textContent = 'SMOKE / FIRE RISK!';
     mq3Badge.className = 'badge badge-danger';
     mq3Progress.className = 'progress-fill fill-danger';
-  } else if (d.mq3_gas >= state.thresholds.mq3Warning) {
-    mq3Badge.textContent = 'Traces Detected';
+  } else if (d.mq2_smoke >= state.thresholds.mq2Warning) {
+    mq3Badge.textContent = 'Smoke Detected';
     mq3Badge.className = 'badge badge-warning';
     mq3Progress.className = 'progress-fill fill-warning';
   } else {
@@ -499,8 +502,15 @@ function evaluateOverallSafety(geofenceResult) {
   if (d.mq135_air >= state.thresholds.mq135Danger) {
     hazards.push(`Toxic Gas Breach: ${Math.round(d.mq135_air)} PPM`);
   }
+  // MQ-2: Smoke / LPG / Flammable Gas
+  if (d.mq2_smoke >= state.thresholds.mq2Danger) {
+    hazards.push(`🔥 Smoke / Flammable Gas: ${Math.round(d.mq2_smoke)} PPM (MQ-2)`);
+  } else if (d.mq2_smoke >= state.thresholds.mq2Warning) {
+    hazards.push(`Smoke Traces Detected: ${Math.round(d.mq2_smoke)} PPM (MQ-2)`);
+  }
+  // MQ-3 legacy check (for smart_helmet_esp32.ino with physical MQ-3 sensor)
   if (d.mq3_gas >= state.thresholds.mq3Danger) {
-    hazards.push(`Flammable Gas Hazard: ${d.mq3_gas.toFixed(2)} mg/L`);
+    hazards.push(`Flammable Gas Hazard: ${d.mq3_gas.toFixed(2)} mg/L (MQ-3)`);
   }
   if (d.temp >= state.thresholds.tempMax) {
     hazards.push(`Critical High Heat: ${d.temp.toFixed(1)}\u00b0C`);
@@ -555,7 +565,7 @@ function evaluateOverallSafety(geofenceResult) {
 
     kpiGasRiskText.textContent = 'LOW HAZARD';
     kpiGasRiskText.className = 'kpi-value text-safe';
-    kpiGasSummary.textContent = 'MQ-3, MQ-7, MQ-135 Nominal';
+    kpiGasSummary.textContent = `MQ-2: ${Math.round(d.mq2_smoke)} PPM  |  MQ-7: ${Math.round(d.mq7_co)} PPM  |  MQ-135: ${Math.round(d.mq135_air)} PPM`;
 
     emergencyBanner.classList.add('hidden');
     triggerAudioAlarm(false);
@@ -734,15 +744,17 @@ function startSimulator() {
     // Subtle natural sensor jitter
     state.telemetry.temp += (Math.random() - 0.5) * 0.15;
     state.telemetry.humidity += (Math.random() - 0.5) * 0.2;
-    state.telemetry.mq7_co += (Math.random() - 0.5) * 0.8;
+    state.telemetry.mq7_co    += (Math.random() - 0.5) * 0.8;
     state.telemetry.mq135_air += (Math.random() - 0.5) * 1.5;
-    state.telemetry.mq3_gas += (Math.random() - 0.5) * 0.005;
+    state.telemetry.mq2_smoke += (Math.random() - 0.5) * 3.0;   // MQ-2 PPM jitter
+    state.telemetry.mq3_gas   += (Math.random() - 0.5) * 0.005; // MQ-3 legacy
 
     // Bounds safety clamp
-    state.telemetry.temp = Math.max(20, Math.min(50, state.telemetry.temp));
-    state.telemetry.mq7_co = Math.max(5, state.telemetry.mq7_co);
+    state.telemetry.temp      = Math.max(20, Math.min(50, state.telemetry.temp));
+    state.telemetry.mq7_co    = Math.max(5,  state.telemetry.mq7_co);
     state.telemetry.mq135_air = Math.max(40, state.telemetry.mq135_air);
-    state.telemetry.mq3_gas = Math.max(0.01, state.telemetry.mq3_gas);
+    state.telemetry.mq2_smoke = Math.max(10, state.telemetry.mq2_smoke);  // min 10 PPM
+    state.telemetry.mq3_gas   = Math.max(0.01, state.telemetry.mq3_gas);
 
     // Worker walking simulation (slight wander)
     if (!state.isFallDetected && state.inactivitySeconds < state.thresholds.inactivityTimeout) {
@@ -859,9 +871,10 @@ function setupEventListeners() {
   document.getElementById('simResetNormalBtn').addEventListener('click', () => {
     state.telemetry.temp = 27.5;
     state.telemetry.humidity = 62;
-    state.telemetry.mq7_co = 14;
+    state.telemetry.mq7_co    = 14;
     state.telemetry.mq135_air = 78;
-    state.telemetry.mq3_gas = 0.05;
+    state.telemetry.mq2_smoke = 85;   // MQ-2 reset
+    state.telemetry.mq3_gas   = 0.05; // MQ-3 legacy reset
     state.telemetry.lat = state.mineSiteCenter.lat;
     state.telemetry.lng = state.mineSiteCenter.lng;
     state.telemetry.accelTotal = 1.01;
@@ -1048,9 +1061,12 @@ function receiveHardwareTelemetry(row) {
     state.telemetry.temp = newTemp;
   }
   if (row.humidity !== undefined) state.telemetry.humidity = parseFloat(row.humidity);
-  if (row.mq7_co !== undefined) state.telemetry.mq7_co = parseFloat(row.mq7_co);
+  if (row.mq7_co    !== undefined) state.telemetry.mq7_co    = parseFloat(row.mq7_co);
   if (row.mq135_air !== undefined) state.telemetry.mq135_air = parseFloat(row.mq135_air);
-  if (row.mq3_gas !== undefined) state.telemetry.mq3_gas = parseFloat(row.mq3_gas);
+  // MQ-2: new dedicated column (dht11_supabase_esp32.ino v3.0)
+  if (row.mq2_smoke !== undefined) state.telemetry.mq2_smoke = parseFloat(row.mq2_smoke);
+  // MQ-3: legacy column (smart_helmet_esp32.ino)
+  if (row.mq3_gas   !== undefined) state.telemetry.mq3_gas   = parseFloat(row.mq3_gas);
   if (row.latitude !== undefined) state.telemetry.lat = parseFloat(row.latitude);
   if (row.longitude !== undefined) state.telemetry.lng = parseFloat(row.longitude);
   if (row.accel_total !== undefined) state.telemetry.accelTotal = parseFloat(row.accel_total);
