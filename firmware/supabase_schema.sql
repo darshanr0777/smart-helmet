@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS public.helmet_telemetry (
     accel_total NUMERIC(5, 2),    -- Total G-force (MPU6050)
     is_fall BOOLEAN DEFAULT FALSE,
     inactivity_secs INTEGER DEFAULT 0,
+    gps_fix BOOLEAN DEFAULT FALSE,        -- GPS has valid satellite fix
+    gps_satellites INTEGER DEFAULT 0,     -- Number of satellites in view
+    gps_hdop NUMERIC(4, 1) DEFAULT 99.9, -- Horizontal Dilution of Precision (lower = better)
     alert_level VARCHAR(20) DEFAULT 'SAFE', -- 'SAFE', 'WARNING', 'DANGER'
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -64,3 +67,11 @@ BEGIN;
 COMMIT;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.helmet_telemetry;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.mine_alerts;
+
+-- 5. Migration: Add GPS quality columns if table already exists
+-- Run these if your table was created before the GPS update:
+ALTER TABLE public.helmet_telemetry
+  ADD COLUMN IF NOT EXISTS gps_fix BOOLEAN DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS gps_satellites INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS gps_hdop NUMERIC(4, 1) DEFAULT 99.9;
+
