@@ -109,32 +109,34 @@ function initLeafletMap() {
     zoomControl: true
   });
 
-  // 1. Official OpenStreetMap (Standard Street Map — 100% Free & Open Source)
+  // 1. High-Resolution World Satellite Imagery (Exact basemap from wristb.netlify.app)
+  const satelliteBasemap = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 19,
+    attribution: '&copy; Esri, Maxar, Earthstar Geographics'
+  });
+
+  // 2. Reference Roads & Boundaries Overlay (Labels on top of Satellite)
+  const referenceOverlay = L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 19,
+    pane: 'overlayPane',
+    opacity: 0.85
+  });
+
+  // 3. Official OpenStreetMap (Standard Street Map)
   const osmStandard = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
   });
 
-  // 2. High-resolution Satellite Imagery (Esri World Imagery)
-  const satelliteView = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 19,
-    attribution: 'Tiles &copy; Esri &mdash; Earthstar Geographics'
-  });
+  // 4. Combined Satellite + Labels group as default (wristb.netlify.app style)
+  const satelliteHybrid = L.layerGroup([satelliteBasemap, referenceOverlay]);
+  satelliteHybrid.addTo(mapInstance);
 
-  // 3. OpenTopoMap (Topographic Terrain)
-  const topoMap = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
-    maxZoom: 17,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-  });
-
-  // Default to real OpenStreetMap
-  osmStandard.addTo(mapInstance);
-
-  // Layer control to switch between Street Map, Satellite, and Terrain
+  // Layer control to toggle between Satellite Hybrid, OpenStreetMap, and Clean Satellite
   const baseMaps = {
+    "🛰️ Satellite (Hybrid)": satelliteHybrid,
     "🗺️ OpenStreetMap": osmStandard,
-    "🛰️ Satellite": satelliteView,
-    "🏔️ Topo Terrain": topoMap
+    "📷 Satellite (Imagery Only)": satelliteBasemap
   };
   L.control.layers(baseMaps, null, { position: 'topright', collapsed: true }).addTo(mapInstance);
 
