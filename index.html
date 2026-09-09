@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MineGuard - IoT Smart Safety Helmet Monitoring & Alert System</title>
   
-  <!-- Google Fonts: Inter & Outfit -->
+  <!-- Google Fonts: Inter · DM Sans · JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
   <!-- Leaflet CSS for GPS & Geofencing Map -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
@@ -52,6 +52,8 @@
         <span id="connectionStatusText">SIMULATOR ACTIVE</span>
       </div>
 
+      <div class="nav-divider"></div>
+
       <!-- Emergency Siren Mute Toggle -->
       <button id="sirenMuteBtn" class="action-btn mute-btn" title="Toggle Alarm Sound">
         <i class="fa-solid fa-volume-high" id="sirenIcon"></i>
@@ -80,6 +82,7 @@
   <main class="dashboard-container">
     
     <!-- Top KPI Grid: Quick Safety Overview -->
+    <div class="section-label"><i class="fa-solid fa-chart-simple"></i> Safety Overview</div>
     <section class="kpi-grid">
       <!-- System Overall Status -->
       <div class="kpi-card card-glow" id="kpiOverallCard">
@@ -131,6 +134,7 @@
     </section>
 
     <!-- Mid Grid: Environmental & Gas Sensors (Hardware Telemetry) -->
+    <div class="section-label"><i class="fa-solid fa-microchip"></i> Sensor Telemetry</div>
     <section class="telemetry-grid">
 
       <!-- Environmental Telemetry: DHT11 -->
@@ -267,6 +271,7 @@
     </section>
 
     <!-- Bottom Split: Interactive Map & Live Incident Log -->
+    <div class="section-label"><i class="fa-solid fa-map-location-dot"></i> Location & Incident Feed</div>
     <section class="map-log-split">
       <!-- GPS Neo-6M Geofencing Map -->
       <div class="panel-card map-panel">
