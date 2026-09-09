@@ -42,18 +42,21 @@ ALTER TABLE public.helmet_telemetry ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.mine_alerts ENABLE ROW LEVEL SECURITY;
 
 -- Allow anon key to insert telemetry from ESP32
+DROP POLICY IF EXISTS "Allow anon insert telemetry" ON public.helmet_telemetry;
 CREATE POLICY "Allow anon insert telemetry" 
 ON public.helmet_telemetry FOR INSERT 
 TO anon 
 WITH CHECK (true);
 
 -- Allow dashboard to read telemetry
+DROP POLICY IF EXISTS "Allow anon read telemetry" ON public.helmet_telemetry;
 CREATE POLICY "Allow anon read telemetry" 
 ON public.helmet_telemetry FOR SELECT 
 TO anon 
 USING (true);
 
 -- Allow alerts access
+DROP POLICY IF EXISTS "Allow anon insert alerts" ON public.mine_alerts;
 CREATE POLICY "Allow anon insert alerts" 
 ON public.mine_alerts FOR ALL 
 TO anon 
