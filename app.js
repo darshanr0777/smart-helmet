@@ -109,22 +109,34 @@ function initLeafletMap() {
     zoomControl: true
   });
 
-  // OpenStreetMap via CartoDB Dark Matter with standard OSM fallback
-  const tileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank">CARTO</a>',
-    subdomains: 'abcd',
-    maxZoom: 20
+  // 1. Official OpenStreetMap (Standard Street Map — 100% Free & Open Source)
+  const osmStandard = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
   });
 
-  tileLayer.on('tileerror', function () {
-    if (!tileLayer._hasFallenBack) {
-      tileLayer._hasFallenBack = true;
-      tileLayer.setUrl('https://tile.openstreetmap.org/{z}/{x}/{y}.png');
-    }
+  // 2. High-resolution Satellite Imagery (Esri World Imagery)
+  const satelliteView = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 19,
+    attribution: 'Tiles &copy; Esri &mdash; Earthstar Geographics'
   });
 
-  tileLayer.addTo(mapInstance);
+  // 3. OpenTopoMap (Topographic Terrain)
+  const topoMap = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+    maxZoom: 17,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  });
+
+  // Default to real OpenStreetMap
+  osmStandard.addTo(mapInstance);
+
+  // Layer control to switch between Street Map, Satellite, and Terrain
+  const baseMaps = {
+    "🗺️ OpenStreetMap": osmStandard,
+    "🛰️ Satellite": satelliteView,
+    "🏔️ Topo Terrain": topoMap
+  };
+  L.control.layers(baseMaps, null, { position: 'topright', collapsed: true }).addTo(mapInstance);
 
   // FeatureGroup to hold all Leaflet.draw layers
   drawnItems = new L.FeatureGroup();
