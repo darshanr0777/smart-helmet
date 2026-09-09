@@ -561,7 +561,7 @@ function evaluateOverallSafety(geofenceResult) {
 
     kpiGasRiskText.textContent = 'CRITICAL RISK';
     kpiGasRiskText.className = 'kpi-value text-danger';
-    kpiGasSummary.textContent = hazards[0];
+    kpiGasSummary.innerHTML = `<span style="color:#fca5a5;font-weight:600">${hazards[0]}</span><br><span style="opacity:0.85;font-size:0.75rem">MQ-2: ${Math.round(d.mq2_smoke)} PPM &bull; MQ-7: ${Math.round(d.mq7_co)} PPM &bull; MQ-135: ${Math.round(d.mq135_air)} PPM</span>`;
 
     // Show Emergency Banner
     emergencyBanner.classList.remove('hidden');

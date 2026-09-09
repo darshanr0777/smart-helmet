@@ -164,6 +164,29 @@ ALTER TABLE public.helmet_telemetry
 ALTER TABLE public.helmet_telemetry
     ADD COLUMN IF NOT EXISTS mq2_smoke NUMERIC(7, 2);
 
+-- Migration 5c: Backfill & Auto-sync mq2_smoke and mq3_gas
+-- Automatically syncs existing and incoming rows so NULLs disappear even before re-flashing!
+UPDATE public.helmet_telemetry
+SET mq2_smoke = mq3_gas
+WHERE mq2_smoke IS NULL AND mq3_gas IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION sync_mq2_smoke_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.mq2_smoke IS NULL AND NEW.mq3_gas IS NOT NULL THEN
+        NEW.mq2_smoke := NEW.mq3_gas;
+    ELSIF NEW.mq3_gas IS NULL AND NEW.mq2_smoke IS NOT NULL THEN
+        NEW.mq3_gas := NEW.mq2_smoke;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sync_mq2_smoke ON public.helmet_telemetry;
+CREATE TRIGGER trg_sync_mq2_smoke
+BEFORE INSERT OR UPDATE ON public.helmet_telemetry
+FOR EACH ROW EXECUTE FUNCTION sync_mq2_smoke_column();
+
 COMMENT ON COLUMN public.helmet_telemetry.mq2_smoke IS
     'MQ-2 sensor reading — Smoke / LPG / Flammable gas in PPM. GPIO 34 on ESP32.';
 
