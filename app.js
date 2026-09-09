@@ -53,15 +53,21 @@ const state = {
 };
 
 // Map & Audio handles
-let mapInstance = null;
-let workerMarker = null;
-let safeCircle = null;
-let dangerCircle = null;
-let audioContext = null;
-let sirenOscillator = null;
-let sirenGain = null;
+let mapInstance    = null;
+let workerMarker   = null;
+let safeCircle     = null;
+let dangerCircle   = null;
+let drawControl    = null;
+let pendingLayer   = null;          // Polygon awaiting name/type input
+let drawnItems     = null;          // L.FeatureGroup for all drawn layers
+let audioContext   = null;
+let sirenOscillator= null;
+let sirenGain      = null;
 let simulatorInterval = null;
 let supabaseClient = null;
+
+// Persisted custom zones: [{ id, name, type, latlngs, layerRef }]
+let drawnZones = [];
 
 // ============================================================================
 // Initialization
@@ -75,108 +81,220 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ============================================================================
-// Leaflet GPS Map & Geofencing Setup
+// Leaflet GPS Map & Geofencing Setup (OpenStreetMap)
 // ============================================================================
 function initLeafletMap() {
   const mapElement = document.getElementById('mineMap');
   if (!mapElement) return;
 
-  // Initialize Map with dark tiles
+  // Initialize map
   mapInstance = L.map('mineMap', {
     center: [state.mineSiteCenter.lat, state.mineSiteCenter.lng],
     zoom: 17,
     zoomControl: true
   });
 
-  // OpenStreetMap CartoDB Dark Matter tiles (Perfect for industrial dark dashboards)
+  // OpenStreetMap via CartoDB Dark Matter (100% OSM data, open-source tiles)
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank">CARTO</a>',
     subdomains: 'abcd',
     maxZoom: 20
   }).addTo(mapInstance);
 
-  // 1. Authorized Safe Mine Operating Zone (Green Circle)
-  safeCircle = L.circle([state.mineSiteCenter.lat, state.mineSiteCenter.lng], {
-    color: '#00E676',
-    fillColor: '#00E676',
-    fillOpacity: 0.12,
-    weight: 2,
-    dashArray: '6, 6',
-    radius: state.safeZoneRadiusMeters
-  }).addTo(mapInstance).bindPopup('<b>Safe Mine Sector A</b><br>Approved Operating Perimeter (180m)');
+  // FeatureGroup to hold all Leaflet.draw layers
+  drawnItems = new L.FeatureGroup();
+  mapInstance.addLayer(drawnItems);
 
-  // 2. Restricted High Hazard Chamber (Red Circle)
-  dangerCircle = L.circle([state.dangerZoneCenter.lat, state.dangerZoneCenter.lng], {
-    color: '#FF1744',
-    fillColor: '#FF1744',
-    fillOpacity: 0.25,
-    weight: 2,
-    radius: state.dangerZoneRadiusMeters
-  }).addTo(mapInstance).bindPopup('<b style="color:#FF1744;">RESTRICTED HAZARD SHAFT</b><br>Toxic/Unstable zone. Entry Prohibited!');
+  // Leaflet.draw control (polygon tool only — cleaner for geofencing)
+  drawControl = new L.Control.Draw({
+    position: 'topright',
+    draw: {
+      polygon: {
+        allowIntersection: false,
+        showArea: true,
+        shapeOptions: {
+          color: '#3B82F6',
+          fillColor: '#3B82F6',
+          fillOpacity: 0.15,
+          weight: 2,
+          dashArray: '5, 5'
+        },
+        metric: true,
+        tooltip: {
+          start: 'Click to place first vertex',
+          cont: 'Click to continue drawing',
+          end: 'Double-click to finish zone'
+        }
+      },
+      rectangle: false,
+      circle:    false,
+      circlemarker: false,
+      marker:    false,
+      polyline:  false
+    },
+    edit: { featureGroup: drawnItems }
+  });
+  // Don't add drawControl to map by default — we control it via button
 
-  // Custom Helmet Worker Marker Icon
-  const helmetIcon = L.divIcon({
-    className: 'custom-helmet-marker',
-    html: `
-      <div style="position:relative; width:34px; height:34px; display:flex; align-items:center; justify-content:center;">
-        <div style="position:absolute; width:100%; height:100%; border-radius:50%; background:rgba(255,179,0,0.35); animation:pulse-dot 1.5s infinite;"></div>
-        <div style="width:24px; height:24px; border-radius:50%; background:#FFB300; border:2px solid #FFF; display:flex; align-items:center; justify-content:center; box-shadow:0 0 10px #FFB300;">
-          <i class="fa-solid fa-hard-hat" style="color:#000; font-size:12px;"></i>
-        </div>
-      </div>
-    `,
-    iconSize: [34, 34],
-    iconAnchor: [17, 17]
+  // When user finishes drawing a polygon — show the name modal
+  mapInstance.on(L.Draw.Event.CREATED, function (e) {
+    pendingLayer = e.layer;
+    // Preview it on the map temporarily
+    drawnItems.addLayer(pendingLayer);
+    // Open the zone naming modal
+    openZoneModal();
   });
 
-  workerMarker = L.marker([state.telemetry.lat, state.telemetry.lng], { icon: helmetIcon }).addTo(mapInstance);
-  workerMarker.bindPopup(`<b>Worker Helmet (W-101)</b><br>Status: Safe<br>Neo-6M GPS Active`);
+  // After editing existing polygon, update saved latlngs
+  mapInstance.on(L.Draw.Event.EDITED, function (e) {
+    e.layers.eachLayer(function (layer) {
+      const zone = drawnZones.find(z => z.layerRef === layer);
+      if (zone) {
+        zone.latlngs = layer.getLatLngs()[0].map(ll => ({ lat: ll.lat, lng: ll.lng }));
+        saveZonesToStorage();
+      }
+    });
+    logIncident('info', 'Geofence zone boundaries updated.');
+  });
+
+  // After deleting polygon(s)
+  mapInstance.on(L.Draw.Event.DELETED, function (e) {
+    e.layers.eachLayer(function (layer) {
+      drawnZones = drawnZones.filter(z => z.layerRef !== layer);
+    });
+    saveZonesToStorage();
+    renderZoneList();
+    logIncident('info', 'Geofence zone(s) removed via map editor.');
+  });
+
+  // Default static circles
+  safeCircle = L.circle([state.mineSiteCenter.lat, state.mineSiteCenter.lng], {
+    color: '#10B981',
+    fillColor: '#10B981',
+    fillOpacity: 0.08,
+    weight: 2,
+    dashArray: '6, 5',
+    radius: state.safeZoneRadiusMeters
+  }).addTo(mapInstance)
+    .bindPopup('<b style="color:#10B981">Safe Mine Perimeter — Sector A</b><br>Authorized operating area (radius 180m)');
+
+  dangerCircle = L.circle([state.dangerZoneCenter.lat, state.dangerZoneCenter.lng], {
+    color: '#EF4444',
+    fillColor: '#EF4444',
+    fillOpacity: 0.18,
+    weight: 2,
+    radius: state.dangerZoneRadiusMeters
+  }).addTo(mapInstance)
+    .bindPopup('<b style="color:#EF4444">RESTRICTED — Deep Mine Shaft</b><br>Toxic / unstable zone. Entry prohibited!');
+
+  // Animated worker helmet marker
+  const helmetIcon = L.divIcon({
+    className: '',
+    html: `
+      <div style="position:relative;width:36px;height:36px;display:flex;align-items:center;justify-content:center">
+        <div style="position:absolute;width:36px;height:36px;border-radius:50%;background:rgba(245,158,11,0.28);animation:pulse-dot 2s ease-in-out infinite"></div>
+        <div style="width:24px;height:24px;border-radius:50%;background:#F59E0B;border:2px solid #fff;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(245,158,11,0.5)">
+          <i class="fa-solid fa-helmet-safety" style="color:#0D1117;font-size:11px"></i>
+        </div>
+      </div>`,
+    iconSize:   [36, 36],
+    iconAnchor: [18, 18]
+  });
+
+  workerMarker = L.marker([state.telemetry.lat, state.telemetry.lng], { icon: helmetIcon })
+    .addTo(mapInstance)
+    .bindPopup(`<b>Worker ${state.activeWorker}</b><br>Status: Monitoring<br><small>Neo-6M GPS Active</small>`);
+
+  // Load zones saved from previous session
+  loadZonesFromStorage();
 }
 
 // ============================================================================
 // Geofence Calculation (Haversine distance in meters)
 // ============================================================================
 function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
-  const R = 6371e3; // Earth radius in meters
+  const R = 6371e3;
   const φ1 = lat1 * Math.PI / 180;
   const φ2 = lat2 * Math.PI / 180;
   const Δφ = (lat2 - lat1) * Math.PI / 180;
   const Δλ = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(Δφ/2)**2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
 
-  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-            Math.cos(φ1) * Math.cos(φ2) *
-            Math.sin(Δλ/2) * Math.sin(Δλ/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  return R * c;
+/**
+ * Ray-casting point-in-polygon check.
+ * @param {number} lat
+ * @param {number} lng
+ * @param {Array<{lat,lng}>} polygon
+ */
+function pointInPolygon(lat, lng, polygon) {
+  let inside = false;
+  const n = polygon.length;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = polygon[i].lat, yi = polygon[i].lng;
+    const xj = polygon[j].lat, yj = polygon[j].lng;
+    const intersect = ((yi > lng) !== (yj > lng)) &&
+      (lat < (xj - xi) * (lng - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
 }
 
 function evaluateGeofence(lat, lng) {
-  const distFromCenter = calculateDistanceMeters(lat, lng, state.mineSiteCenter.lat, state.mineSiteCenter.lng);
+  const distFromCenter   = calculateDistanceMeters(lat, lng, state.mineSiteCenter.lat, state.mineSiteCenter.lng);
   const distToRestricted = calculateDistanceMeters(lat, lng, state.dangerZoneCenter.lat, state.dangerZoneCenter.lng);
 
   const kpiGeofenceText = document.getElementById('kpiGeofenceText');
   const kpiDistanceText = document.getElementById('kpiDistanceText');
 
-  // Case 1: Inside Dangerous Chamber
+  // --- Check custom drawn zones first ---
+  for (const zone of drawnZones) {
+    if (pointInPolygon(lat, lng, zone.latlngs)) {
+      const item = document.getElementById('zone-item-' + zone.id);
+      if (item) item.classList.add('zone-violated');
+
+      if (zone.type === 'restricted') {
+        kpiGeofenceText.textContent = 'ZONE BREACH — ' + zone.name.toUpperCase();
+        kpiGeofenceText.className   = 'kpi-value text-danger';
+        kpiDistanceText.textContent = 'Inside restricted: ' + zone.name;
+        return { status: 'BREACH_RESTRICTED', message: `Worker entered RESTRICTED zone: "${zone.name}"!` };
+      } else if (zone.type === 'warning') {
+        kpiGeofenceText.textContent = 'CAUTION ZONE — ' + zone.name.toUpperCase();
+        kpiGeofenceText.className   = 'kpi-value text-warning';
+        kpiDistanceText.textContent = 'Inside caution zone: ' + zone.name;
+        return { status: 'WARNING_ZONE', message: `Worker entered caution zone: "${zone.name}"` };
+      } else {
+        kpiGeofenceText.textContent = 'INSIDE SAFE ZONE';
+        kpiGeofenceText.className   = 'kpi-value text-safe';
+        kpiDistanceText.textContent = 'Authorized zone: ' + zone.name;
+        return { status: 'SAFE', message: '' };
+      }
+    } else {
+      const item = document.getElementById('zone-item-' + zone.id);
+      if (item) item.classList.remove('zone-violated');
+    }
+  }
+
+  // --- Default static zones ---
   if (distToRestricted <= state.dangerZoneRadiusMeters) {
     kpiGeofenceText.textContent = 'RESTRICTED AREA BREACH!';
-    kpiGeofenceText.className = 'kpi-value text-danger';
+    kpiGeofenceText.className   = 'kpi-value text-danger';
     kpiDistanceText.textContent = `Inside Toxic Shaft (${Math.round(distToRestricted)}m from epicenter)`;
     return { status: 'BREACH_RESTRICTED', message: 'CRITICAL: Worker entered restricted toxic hazard shaft!' };
   }
 
-  // Case 2: Out of Safe Mine Perimeter
   if (distFromCenter > state.safeZoneRadiusMeters) {
     kpiGeofenceText.textContent = 'OUT OF BOUNDS';
-    kpiGeofenceText.className = 'kpi-value text-danger';
+    kpiGeofenceText.className   = 'kpi-value text-danger';
     kpiDistanceText.textContent = `${Math.round(distFromCenter - state.safeZoneRadiusMeters)}m outside perimeter`;
     return { status: 'OUT_OF_BOUNDS', message: 'WARNING: Worker strayed outside authorized mine perimeter!' };
   }
 
-  // Case 3: Inside Safe Zone
   const distToBoundary = Math.max(0, Math.round(state.safeZoneRadiusMeters - distFromCenter));
   kpiGeofenceText.textContent = 'INSIDE SAFE ZONE';
-  kpiGeofenceText.className = 'kpi-value text-safe';
+  kpiGeofenceText.className   = 'kpi-value text-safe';
   kpiDistanceText.textContent = `Dist to Perimeter: ~${distToBoundary}m`;
   return { status: 'SAFE', message: '' };
 }
@@ -195,19 +313,19 @@ function updateDashboardUI() {
   const tempBadge = document.getElementById('tempBadge');
   if (d.temp >= state.thresholds.tempMax) {
     tempBadge.textContent = 'Extreme Heat';
-    tempBadge.className = 'badge badge-danger';
-    tempGauge.style.borderColor = 'var(--danger-crimson)';
-    tempGauge.style.boxShadow = '0 0 15px var(--danger-glow)';
+    tempBadge.className   = 'badge badge-danger';
+    tempGauge.style.borderColor = 'var(--status-danger)';
+    tempGauge.style.boxShadow   = '0 0 14px rgba(239,68,68,0.3)';
   } else if (d.temp >= state.thresholds.tempWarning) {
     tempBadge.textContent = 'Warning';
-    tempBadge.className = 'badge badge-warning';
-    tempGauge.style.borderColor = 'var(--safety-amber)';
-    tempGauge.style.boxShadow = '0 0 15px var(--safety-amber-glow)';
+    tempBadge.className   = 'badge badge-warning';
+    tempGauge.style.borderColor = 'var(--status-warning)';
+    tempGauge.style.boxShadow   = '0 0 14px rgba(245,158,11,0.25)';
   } else {
     tempBadge.textContent = 'Optimal';
-    tempBadge.className = 'badge badge-safe';
-    tempGauge.style.borderColor = 'var(--cyber-cyan)';
-    tempGauge.style.boxShadow = '0 0 15px var(--cyber-cyan-glow)';
+    tempBadge.className   = 'badge badge-safe';
+    tempGauge.style.borderColor = 'var(--status-info)';
+    tempGauge.style.boxShadow   = 'none';
   }
 
   // 2. Gas Array: MQ-7 (Carbon Monoxide)
@@ -662,6 +780,63 @@ function setupEventListeners() {
   document.getElementById('saveConfigBtn').addEventListener('click', () => {
     saveSupabaseConfig();
   });
+
+  // ── Draw Zone button ─────────────────────────────────────────────────────
+  const drawBtn = document.getElementById('startDrawPolygonBtn');
+  drawBtn.addEventListener('click', () => {
+    if (!mapInstance) return;
+    const isActive = drawBtn.classList.contains('drawing-active');
+    if (isActive) {
+      // Cancel draw mode
+      mapInstance.removeControl(drawControl);
+      drawBtn.classList.remove('drawing-active');
+      drawBtn.innerHTML = '<i class="fa-solid fa-draw-polygon"></i> Draw Zone';
+    } else {
+      // Activate draw mode — add control + auto-start polygon tool
+      mapInstance.addControl(drawControl);
+      drawBtn.classList.add('drawing-active');
+      drawBtn.innerHTML = '<i class="fa-solid fa-xmark"></i> Cancel Draw';
+      // Programmatically trigger the polygon draw handler
+      new L.Draw.Polygon(mapInstance, drawControl.options.draw.polygon).enable();
+    }
+  });
+
+  // ── Zone create modal events ─────────────────────────────────────────────
+  const zoneModal    = document.getElementById('zoneCreateModal');
+  const zoneTypeSelect = document.getElementById('zoneTypeSelect');
+  const zoneTypeDesc   = document.getElementById('zoneTypeDesc');
+
+  const typeDescMap = {
+    restricted: { cls: '', icon: 'fa-circle-exclamation', color: 'var(--status-danger)', text: 'Workers entering this zone will trigger an immediate EMERGENCY alert.' },
+    warning:    { cls: 'type-warning', icon: 'fa-triangle-exclamation', color: 'var(--status-warning)', text: 'Workers entering this zone will trigger a CAUTION warning.' },
+    safe:       { cls: 'type-safe',    icon: 'fa-shield-check', color: 'var(--status-safe)', text: 'This is an authorized zone — no alert is triggered on entry.' }
+  };
+
+  zoneTypeSelect.addEventListener('change', () => {
+    const info = typeDescMap[zoneTypeSelect.value];
+    zoneTypeDesc.className = 'zone-type-desc ' + info.cls;
+    zoneTypeDesc.innerHTML = `<i class="fa-solid ${info.icon}" style="color:${info.color};flex-shrink:0"></i> ${info.text}`;
+  });
+
+  document.getElementById('cancelZoneBtn').addEventListener('click', () => {
+    discardPendingZone();
+  });
+  document.getElementById('discardZoneBtn').addEventListener('click', () => {
+    discardPendingZone();
+  });
+  document.getElementById('saveZoneBtn').addEventListener('click', () => {
+    saveNewZone();
+  });
+
+  // ── Default circle toggles ───────────────────────────────────────────────
+  document.getElementById('toggleSafeCircle').addEventListener('change', function () {
+    if (!mapInstance) return;
+    this.checked ? safeCircle.addTo(mapInstance) : mapInstance.removeLayer(safeCircle);
+  });
+  document.getElementById('toggleDangerCircle').addEventListener('change', function () {
+    if (!mapInstance) return;
+    this.checked ? dangerCircle.addTo(mapInstance) : mapInstance.removeLayer(dangerCircle);
+  });
 }
 
 // ============================================================================
@@ -756,4 +931,188 @@ function receiveHardwareTelemetry(row) {
 
   logIncident('info', `Hardware payload received from ESP32 (${state.activeWorker}).`);
   updateDashboardUI();
+}
+
+// ============================================================================
+// Geofence Zone Management
+// ============================================================================
+
+/** Open zone naming modal after drawing completes */
+function openZoneModal() {
+  // Reset draw button state
+  const drawBtn = document.getElementById('startDrawPolygonBtn');
+  if (drawBtn) {
+    drawBtn.classList.remove('drawing-active');
+    drawBtn.innerHTML = '<i class="fa-solid fa-draw-polygon"></i> Draw Zone';
+    if (mapInstance) mapInstance.removeControl(drawControl);
+  }
+  // Reset form
+  document.getElementById('zoneNameInput').value = '';
+  document.getElementById('zoneTypeSelect').value = 'restricted';
+  const desc = document.getElementById('zoneTypeDesc');
+  desc.className = 'zone-type-desc';
+  desc.innerHTML = `<i class="fa-solid fa-circle-exclamation" style="color:var(--status-danger);flex-shrink:0"></i> Workers entering this zone will trigger an immediate EMERGENCY alert.`;
+  // Show modal
+  document.getElementById('zoneCreateModal').classList.remove('hidden');
+}
+
+/** Discard the pending drawn polygon */
+function discardPendingZone() {
+  if (pendingLayer && drawnItems) {
+    drawnItems.removeLayer(pendingLayer);
+  }
+  pendingLayer = null;
+  document.getElementById('zoneCreateModal').classList.add('hidden');
+  logIncident('info', 'Zone drawing discarded.');
+}
+
+/** Save the pending polygon as a named zone */
+function saveNewZone() {
+  if (!pendingLayer) return;
+
+  const name = document.getElementById('zoneNameInput').value.trim() || 'Unnamed Zone';
+  const type = document.getElementById('zoneTypeSelect').value;
+
+  // Style based on type
+  const styles = {
+    restricted: { color: '#EF4444', fillColor: '#EF4444', fillOpacity: 0.18, dashArray: null },
+    warning:    { color: '#F59E0B', fillColor: '#F59E0B', fillOpacity: 0.14, dashArray: '6,4' },
+    safe:       { color: '#10B981', fillColor: '#10B981', fillOpacity: 0.10, dashArray: '6,4' }
+  };
+  const s = styles[type] || styles.restricted;
+
+  pendingLayer.setStyle({
+    color:       s.color,
+    fillColor:   s.fillColor,
+    fillOpacity: s.fillOpacity,
+    weight:      2,
+    dashArray:   s.dashArray
+  });
+
+  const latlngs = pendingLayer.getLatLngs()[0].map(ll => ({ lat: ll.lat, lng: ll.lng }));
+
+  const zone = {
+    id:       Date.now().toString(),
+    name,
+    type,
+    latlngs,
+    layerRef: pendingLayer
+  };
+
+  // Bind a tooltip to the polygon on the map
+  pendingLayer.bindTooltip(
+    `<b>${name}</b><br><span style="text-transform:uppercase;font-size:0.72em">${type}</span>`,
+    { permanent: false, sticky: true }
+  );
+
+  drawnZones.push(zone);
+  pendingLayer = null;
+
+  saveZonesToStorage();
+  renderZoneList();
+
+  document.getElementById('zoneCreateModal').classList.add('hidden');
+  logIncident('safe', `Geofence zone saved: "${name}" [${type.toUpperCase()}]`);
+}
+
+/** Delete a saved zone by id */
+function deleteZone(id) {
+  const idx = drawnZones.findIndex(z => z.id === id);
+  if (idx === -1) return;
+  const zone = drawnZones[idx];
+  if (zone.layerRef && drawnItems) {
+    drawnItems.removeLayer(zone.layerRef);
+  }
+  drawnZones.splice(idx, 1);
+  saveZonesToStorage();
+  renderZoneList();
+  logIncident('info', `Geofence zone deleted: "${zone.name}"`);
+}
+
+/** Fly the map to a specific zone */
+function zoomToZone(id) {
+  const zone = drawnZones.find(z => z.id === id);
+  if (!zone || !zone.layerRef || !mapInstance) return;
+  mapInstance.fitBounds(zone.layerRef.getBounds(), { padding: [30, 30] });
+}
+
+/** Re-render the zone list panel */
+function renderZoneList() {
+  const list      = document.getElementById('zoneList');
+  const countChip = document.getElementById('zoneCountChip');
+  if (!list) return;
+
+  list.innerHTML = '';
+  if (countChip) countChip.textContent = drawnZones.length + ' Zone' + (drawnZones.length !== 1 ? 's' : '');
+
+  if (drawnZones.length === 0) {
+    list.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.25rem 0.1rem">No custom zones yet. Draw one on the map!</div>';
+    return;
+  }
+
+  const typeColors = { restricted: 'var(--status-danger)', warning: 'var(--status-warning)', safe: 'var(--status-safe)' };
+  const typeLabels = { restricted: 'Restricted', warning: 'Warning',  safe: 'Safe Zone' };
+
+  drawnZones.forEach(zone => {
+    const item = document.createElement('div');
+    item.className = 'zone-item';
+    item.id = 'zone-item-' + zone.id;
+    item.innerHTML = `
+      <span class="zone-item-dot" style="background:${typeColors[zone.type] || '#8B949E'}"></span>
+      <div class="zone-item-info">
+        <div class="zone-item-name">${zone.name}</div>
+        <div class="zone-item-type">${typeLabels[zone.type] || zone.type}</div>
+      </div>
+      <div class="zone-item-actions">
+        <button class="zone-item-btn btn-zoom" title="Zoom to zone" onclick="zoomToZone('${zone.id}')">
+          <i class="fa-solid fa-magnifying-glass-location"></i>
+        </button>
+        <button class="zone-item-btn" title="Delete zone" onclick="deleteZone('${zone.id}')">
+          <i class="fa-solid fa-trash"></i>
+        </button>
+      </div>
+    `;
+    list.appendChild(item);
+  });
+}
+
+/** Persist zones to localStorage (without layerRef — that's live only) */
+function saveZonesToStorage() {
+  const serializable = drawnZones.map(z => ({
+    id: z.id, name: z.name, type: z.type, latlngs: z.latlngs
+  }));
+  localStorage.setItem('mineguard_zones', JSON.stringify(serializable));
+}
+
+/** Load zones from localStorage and re-draw them on the map */
+function loadZonesFromStorage() {
+  const raw = localStorage.getItem('mineguard_zones');
+  if (!raw) return;
+  let saved;
+  try { saved = JSON.parse(raw); } catch { return; }
+
+  const styles = {
+    restricted: { color: '#EF4444', fillColor: '#EF4444', fillOpacity: 0.18, dashArray: null },
+    warning:    { color: '#F59E0B', fillColor: '#F59E0B', fillOpacity: 0.14, dashArray: '6,4' },
+    safe:       { color: '#10B981', fillColor: '#10B981', fillOpacity: 0.10, dashArray: '6,4' }
+  };
+
+  saved.forEach(z => {
+    const latlngs = z.latlngs.map(p => [p.lat, p.lng]);
+    const s = styles[z.type] || styles.restricted;
+    const layer = L.polygon(latlngs, {
+      color: s.color, fillColor: s.fillColor, fillOpacity: s.fillOpacity,
+      weight: 2, dashArray: s.dashArray
+    }).bindTooltip(
+      `<b>${z.name}</b><br><span style="text-transform:uppercase;font-size:0.72em">${z.type}</span>`,
+      { permanent: false, sticky: true }
+    );
+    drawnItems.addLayer(layer);
+    drawnZones.push({ id: z.id, name: z.name, type: z.type, latlngs: z.latlngs, layerRef: layer });
+  });
+
+  renderZoneList();
+  if (drawnZones.length > 0) {
+    logIncident('info', `Loaded ${drawnZones.length} saved geofence zone(s) from storage.`);
+  }
 }

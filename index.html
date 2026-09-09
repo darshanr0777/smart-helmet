@@ -12,6 +12,8 @@
 
   <!-- Leaflet CSS for GPS & Geofencing Map -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <!-- Leaflet.draw — Zone drawing plugin -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
   
   <!-- FontAwesome Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
@@ -270,79 +272,115 @@
       </div>
     </section>
 
-    <!-- Bottom Split: Interactive Map & Live Incident Log -->
-    <div class="section-label"><i class="fa-solid fa-map-location-dot"></i> Location & Incident Feed</div>
-    <section class="map-log-split">
-      <!-- GPS Neo-6M Geofencing Map -->
+    <!-- Location & Geofencing Section -->
+    <div class="section-label"><i class="fa-solid fa-map-location-dot"></i> Location & Geofencing</div>
+    <section class="map-full-row">
+
+      <!-- LEFT: Live OSM Map -->
       <div class="panel-card map-panel">
         <div class="panel-header">
           <div class="header-left">
             <h3><i class="fa-solid fa-location-crosshairs"></i> Live GPS & Mine Geofencing</h3>
-            <span class="chip chip-cyan" id="gpsLockChip"><i class="fa-solid fa-satellite"></i> GPS Locked (Neo-6M)</span>
+            <span class="chip chip-cyan" id="gpsLockChip"><i class="fa-solid fa-satellite"></i> GPS (Neo-6M)</span>
           </div>
           <div class="map-controls">
             <button id="recenterMapBtn" class="small-btn"><i class="fa-solid fa-arrows-to-dot"></i> Recenter</button>
+            <button id="startDrawPolygonBtn" class="small-btn btn-draw"><i class="fa-solid fa-draw-polygon"></i> Draw Zone</button>
             <button id="triggerGeofenceBreachSimBtn" class="small-btn btn-warning-sim"><i class="fa-solid fa-route"></i> Test Breach</button>
           </div>
         </div>
-        <div class="panel-body map-container-body">
+        <div class="map-body">
           <div id="mineMap" class="leaflet-map-frame"></div>
-          <div class="map-legend">
-            <div class="legend-item"><span class="legend-dot dot-green"></span> Authorized Mine Sector</div>
-            <div class="legend-item"><span class="legend-dot dot-red"></span> Restricted / High Risk Zone</div>
-            <div class="legend-item"><span class="legend-dot dot-worker"></span> Live Worker Helmet</div>
-          </div>
         </div>
         <div class="map-coords-bar">
           <span>Lat: <strong id="workerLat">12.971598</strong></span>
           <span>Lng: <strong id="workerLng">77.594566</strong></span>
-          <span>Altitude: <strong id="workerAlt">922 m</strong></span>
-          <span>Satellites: <strong id="workerSats">8</strong></span>
+          <span>Alt: <strong id="workerAlt">922 m</strong></span>
+          <span>Sats: <strong id="workerSats">8</strong></span>
+          <span class="map-legend-inline">
+            <span class="legend-dot dot-green"></span> Safe
+            <span class="legend-dot dot-red" style="margin-left:8px"></span> Restricted
+            <span class="legend-dot dot-worker" style="margin-left:8px"></span> Worker
+          </span>
         </div>
       </div>
 
-      <!-- Incident Log & Hazard Simulation Controls -->
-      <div class="panel-card incident-panel">
-        <div class="panel-header">
-          <h3><i class="fa-solid fa-clipboard-list"></i> Real-Time Incident & Alert Log</h3>
-          <button id="clearLogsBtn" class="small-btn text-muted"><i class="fa-solid fa-trash-can"></i> Clear</button>
-        </div>
-        <div class="panel-body log-list" id="alertLogsContainer">
-          <div class="log-entry log-entry-info">
-            <span class="log-time">14:15:00</span>
-            <span class="log-msg">MineGuard monitoring system initialized for Helmet 01.</span>
+      <!-- RIGHT COLUMN: Zone Manager + Incident Log -->
+      <div class="right-column">
+
+        <!-- Zone Management Panel -->
+        <div class="panel-card zone-manager-panel">
+          <div class="panel-header">
+            <h3><i class="fa-solid fa-draw-polygon"></i> Geofence Zone Manager</h3>
+            <span class="chip chip-info" id="zoneCountChip">0 Zones</span>
           </div>
-          <div class="log-entry log-entry-safe">
-            <span class="log-time">14:15:02</span>
-            <span class="log-msg">All sensors initialized: MQ-3, MQ-7, MQ-135, DHT11, GPS Neo-6M, MPU-6050.</span>
+          <div class="zone-manager-body">
+            <!-- Draw toolbar hint -->
+            <div class="zone-draw-hint" id="zoneDrawHint">
+              <i class="fa-solid fa-hand-pointer"></i>
+              <div>
+                <strong>Click "Draw Zone" to start</strong>
+                <span>Click on the map to place vertices. Double-click to close the polygon.</span>
+              </div>
+            </div>
+
+            <!-- Saved zones list -->
+            <div class="zone-list" id="zoneList">
+              <!-- Populated by JS -->
+            </div>
+
+            <!-- Default static zones toggle -->
+            <div class="zone-static-toggles">
+              <div class="zone-toggle-row">
+                <span class="zone-dot zone-dot-safe"></span>
+                <span class="zone-toggle-name">Default Safe Perimeter (180m)</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="toggleSafeCircle" checked>
+                  <span class="toggle-knob"></span>
+                </label>
+              </div>
+              <div class="zone-toggle-row">
+                <span class="zone-dot zone-dot-danger"></span>
+                <span class="zone-toggle-name">Default Restricted Shaft (70m)</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="toggleDangerCircle" checked>
+                  <span class="toggle-knob"></span>
+                </label>
+              </div>
+            </div>
           </div>
         </div>
 
-        <!-- Simulator Emergency Triggers (For testing before ESP32 uploads) -->
-        <div class="simulator-actions-box">
-          <div class="sim-box-title">
-            <span><i class="fa-solid fa-flask"></i> Interactive Demo Triggers</span>
-            <span class="chip-sm">Hardware Simulator</span>
+        <!-- Incident Log -->
+        <div class="panel-card incident-panel">
+          <div class="panel-header">
+            <h3><i class="fa-solid fa-clipboard-list"></i> Incident & Alert Log</h3>
+            <button id="clearLogsBtn" class="small-btn"><i class="fa-solid fa-trash-can"></i> Clear</button>
           </div>
-          <div class="sim-buttons-grid">
-            <button class="sim-btn btn-toxic" id="simToxicGasBtn">
-              <i class="fa-solid fa-wind"></i> Gas Leak (CO/MQ7)
-            </button>
-            <button class="sim-btn btn-heat" id="simHighTempBtn">
-              <i class="fa-solid fa-fire"></i> High Temp (DHT11)
-            </button>
-            <button class="sim-btn btn-fall" id="simFallBtn">
-              <i class="fa-solid fa-person-falling"></i> Fall / Impact
-            </button>
-            <button class="sim-btn btn-inactivity" id="simInactivityBtn">
-              <i class="fa-solid fa-bed"></i> Inactivity / Unconscious
-            </button>
-            <button class="sim-btn btn-normal" id="simResetNormalBtn">
-              <i class="fa-solid fa-rotate-left"></i> Reset to Safe
-            </button>
+          <div class="panel-body log-list" id="alertLogsContainer">
+            <div class="log-entry log-entry-info">
+              <span class="log-time">--:--:--</span>
+              <span class="log-msg">MineGuard system initializing…</span>
+            </div>
+          </div>
+
+          <!-- Simulator Box -->
+          <div class="simulator-actions-box">
+            <div class="sim-box-title">
+              <span><i class="fa-solid fa-flask"></i> Demo Triggers</span>
+              <span class="chip-sm">Simulator</span>
+            </div>
+            <div class="sim-buttons-grid">
+              <button class="sim-btn btn-toxic" id="simToxicGasBtn"><i class="fa-solid fa-wind"></i> Gas Leak</button>
+              <button class="sim-btn btn-heat" id="simHighTempBtn"><i class="fa-solid fa-fire"></i> High Temp</button>
+              <button class="sim-btn btn-fall" id="simFallBtn"><i class="fa-solid fa-person-falling"></i> Fall</button>
+              <button class="sim-btn btn-inactivity" id="simInactivityBtn"><i class="fa-solid fa-bed"></i> Inactivity</button>
+              <button class="sim-btn btn-normal" id="simResetNormalBtn"><i class="fa-solid fa-rotate-left"></i> Reset Safe</button>
+            </div>
           </div>
         </div>
-      </div>
+
+      </div><!-- end right-column -->
     </section>
 
   </main>
@@ -386,8 +424,42 @@
     </div>
   </div>
 
+  <!-- Zone Create Modal -->
+  <div id="zoneCreateModal" class="modal-backdrop hidden">
+    <div class="modal-card" style="max-width:420px">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-draw-polygon"></i> Name This Zone</h3>
+        <button id="cancelZoneBtn" class="close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">The polygon you just drew will be saved as a named geofence zone.</p>
+        <div class="form-group">
+          <label for="zoneNameInput">Zone Name:</label>
+          <input type="text" id="zoneNameInput" placeholder="e.g. Shaft B Restricted Area" class="styled-input" maxlength="48">
+        </div>
+        <div class="form-group">
+          <label for="zoneTypeSelect">Zone Type:</label>
+          <select id="zoneTypeSelect" class="styled-input styled-select">
+            <option value="restricted">🔴 Restricted / Prohibited Area</option>
+            <option value="safe">🟢 Safe / Authorized Zone</option>
+            <option value="warning">🟡 Caution / Warning Zone</option>
+          </select>
+        </div>
+        <div class="zone-type-desc" id="zoneTypeDesc">
+          <i class="fa-solid fa-circle-exclamation" style="color:var(--status-danger)"></i>
+          Workers entering this zone will trigger an immediate emergency alert.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="discardZoneBtn" class="small-btn" style="margin-right:auto"><i class="fa-solid fa-trash"></i> Discard</button>
+        <button id="saveZoneBtn" class="primary-btn"><i class="fa-solid fa-floppy-disk"></i> Save Zone</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Scripts -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
