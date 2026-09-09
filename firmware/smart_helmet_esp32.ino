@@ -34,8 +34,8 @@
 // ==========================================
 // 1. NETWORK & SUPABASE CONFIGURATION
 // ==========================================
-const char* WIFI_SSID     = "YOUR_HOTSPOT_NAME";
-const char* WIFI_PASSWORD = "YOUR_HOTSPOT_PASSWORD";
+const char* WIFI_SSID     = "darshan";
+const char* WIFI_PASSWORD = "12345678";
 
 const char* SUPABASE_URL  = "https://srkowkuclkimtwhkiutg.supabase.co/rest/v1/helmet_telemetry";
 const char* SUPABASE_KEY  = "sb_publishable_kWHQSFzZEblEqWzlTwZuvg_ISGBBUCu";
