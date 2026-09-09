@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MineGuard - IoT Smart Safety Helmet Monitoring & Alert System</title>
+  <title>SmartHelmet - IoT Safety & Geofencing System</title>
   
   <!-- Google Fonts: Inter · DM Sans · JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -18,372 +18,641 @@
   <!-- FontAwesome Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
 
+  <!-- Chart.js for Donut and Bar Analytics -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
   <!-- Supabase JS Client (v2) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
   <!-- Custom CSS -->
   <link rel="stylesheet" href="style.css">
 </head>
-<body class="theme-dark">
-  <!-- Top Navigation Bar -->
-  <header class="navbar">
-    <div class="nav-brand">
-      <div class="helmet-icon-glow">
+<body class="app-layout">
+
+  <!-- ========================================================================
+       LEFT SIDEBAR NAVIGATION
+       ======================================================================== -->
+  <aside class="sidebar" id="appSidebar">
+    <!-- Brand Logo -->
+    <div class="sidebar-brand">
+      <div class="brand-icon">
         <i class="fa-solid fa-helmet-safety"></i>
       </div>
-      <div class="brand-text">
-        <h1>MineGuard IoT</h1>
-        <p class="subtitle">Smart Helmet Real-Time Safety & Monitoring Hub</p>
-      </div>
+      <span class="brand-title">SmartHelmet</span>
+      <!-- Mobile sidebar toggle -->
+      <button class="sidebar-close-btn" id="sidebarCloseBtn"><i class="fa-solid fa-xmark"></i></button>
     </div>
 
-    <div class="nav-status-group">
-      <!-- Active Worker Selector -->
-      <div class="worker-select-wrap">
-        <label for="workerSelect"><i class="fa-solid fa-user-shield"></i> Worker:</label>
-        <select id="workerSelect" class="styled-select">
-          <option value="W-101">Worker #101 - Rajesh K. (Helmet 01)</option>
-          <option value="W-102">Worker #102 - Amit Verma (Helmet 02)</option>
-          <option value="W-103">Worker #103 - Suresh P. (Helmet 03)</option>
-        </select>
+    <!-- Navigation Menu Items -->
+    <nav class="sidebar-nav">
+      <a href="#dashboard" class="nav-link active" data-tab="tab-dashboard" id="navItemDashboard">
+        <i class="fa-solid fa-table-cells-large"></i>
+        <span>Dashboard</span>
+      </a>
+      <a href="#live-map" class="nav-link" data-tab="tab-live-map" id="navItemLiveMap">
+        <i class="fa-solid fa-map-location-dot"></i>
+        <span>Live Map</span>
+      </a>
+      <a href="#devices" class="nav-link" data-tab="tab-devices" id="navItemDevices">
+        <i class="fa-solid fa-microchip"></i>
+        <span>Devices</span>
+      </a>
+      <a href="#zones" class="nav-link" data-tab="tab-zones" id="navItemZones">
+        <i class="fa-solid fa-shield-halved"></i>
+        <span>Zones</span>
+      </a>
+      <a href="#alerts" class="nav-link" data-tab="tab-alerts" id="navItemAlerts">
+        <i class="fa-solid fa-triangle-exclamation"></i>
+        <span>Alerts</span>
+        <span class="nav-badge hidden" id="navAlertBadge">0</span>
+      </a>
+      <a href="#history" class="nav-link" data-tab="tab-history" id="navItemHistory">
+        <i class="fa-solid fa-clock-rotate-left"></i>
+        <span>History</span>
+      </a>
+    </nav>
+
+    <!-- Sidebar Footer: User Profile & Actions -->
+    <div class="sidebar-footer">
+      <div class="user-profile">
+        <div class="user-avatar">D</div>
+        <div class="user-details">
+          <div class="user-email">demo@demo.com</div>
+          <div class="user-role">ADMIN</div>
+        </div>
       </div>
-
-      <!-- Live Connection Pill -->
-      <div class="status-badge" id="connectionStatusBadge">
-        <span class="status-dot pulsing"></span>
-        <span id="connectionStatusText">SIMULATOR ACTIVE</span>
-      </div>
-
-      <div class="nav-divider"></div>
-
-      <!-- Emergency Siren Mute Toggle -->
-      <button id="sirenMuteBtn" class="action-btn mute-btn" title="Toggle Alarm Sound">
-        <i class="fa-solid fa-volume-high" id="sirenIcon"></i>
+      <button class="logout-btn" id="logoutBtn" title="Logout Session">
+        <i class="fa-solid fa-arrow-right-from-bracket"></i>
+        <span>Logout</span>
       </button>
-
-      <!-- Supabase Config Modal Trigger -->
-      <button id="openConfigBtn" class="action-btn config-btn" title="Supabase Cloud Settings">
-        <i class="fa-solid fa-cloud"></i>
-      </button>
     </div>
-  </header>
+  </aside>
 
-  <!-- Emergency Banner (Hidden by default, triggered on critical danger) -->
-  <div id="emergencyBanner" class="emergency-banner hidden">
-    <div class="emergency-content">
-      <i class="fa-solid fa-triangle-exclamation blink-fast"></i>
-      <div class="emergency-msg">
-        <strong id="emergencyTitle">HAZARD ALERT TRIGGERED!</strong>
-        <span id="emergencyDetail">Dangerous gas levels detected in Sector B. Immediate evacuation required.</span>
+  <!-- ========================================================================
+       MAIN APP CONTENT
+       ======================================================================== -->
+  <div class="main-wrapper">
+
+    <!-- Top Floating Header Bar -->
+    <header class="top-navbar">
+      <div class="top-nav-left">
+        <button class="sidebar-toggle-btn" id="sidebarToggleBtn" title="Toggle Navigation">
+          <i class="fa-solid fa-bars"></i>
+        </button>
+        <h2 class="view-main-title" id="viewMainTitle">System Overview</h2>
       </div>
-      <button id="dismissAlertBtn" class="banner-dismiss-btn">Acknowledge</button>
+
+      <div class="top-nav-right">
+        <!-- Active Worker Selector -->
+        <div class="worker-select-wrap">
+          <label for="workerSelect"><i class="fa-solid fa-user-shield"></i> Worker:</label>
+          <select id="workerSelect" class="styled-select">
+            <option value="W-101">Worker #101 - Rajesh K. (Helmet 01)</option>
+            <option value="W-102">Worker #102 - Amit Verma (Helmet 02)</option>
+            <option value="W-103">Worker #103 - Suresh P. (Helmet 03)</option>
+          </select>
+        </div>
+
+        <!-- Connection Status Pill -->
+        <div class="status-badge" id="connectionStatusBadge">
+          <span class="status-dot pulsing"></span>
+          <span id="connectionStatusText">SIMULATOR ACTIVE</span>
+        </div>
+
+        <!-- Audio Siren Mute Toggle -->
+        <button id="sirenMuteBtn" class="top-action-btn mute-btn" title="Toggle Alarm Siren">
+          <i class="fa-solid fa-volume-high" id="sirenIcon"></i>
+        </button>
+
+        <!-- Supabase Cloud Settings Trigger -->
+        <button id="openConfigBtn" class="top-action-btn config-btn" title="Cloud Settings">
+          <i class="fa-solid fa-cloud"></i>
+        </button>
+      </div>
+    </header>
+
+    <!-- Emergency Banner (Appears on critical hazard/breach) -->
+    <div id="emergencyBanner" class="emergency-banner hidden">
+      <div class="emergency-content">
+        <i class="fa-solid fa-triangle-exclamation blink-fast"></i>
+        <div class="emergency-msg">
+          <strong id="emergencyTitle">HAZARD ALERT TRIGGERED!</strong>
+          <span id="emergencyDetail">Dangerous gas levels detected in Sector B. Immediate evacuation required.</span>
+        </div>
+        <button id="dismissAlertBtn" class="banner-dismiss-btn">Acknowledge</button>
+      </div>
     </div>
-  </div>
 
-  <!-- Main Dashboard Container -->
-  <main class="dashboard-container">
-    
-    <!-- Top KPI Grid: Quick Safety Overview -->
-    <div class="section-label"><i class="fa-solid fa-chart-simple"></i> Safety Overview</div>
-    <section class="kpi-grid">
-      <!-- System Overall Status -->
-      <div class="kpi-card card-glow" id="kpiOverallCard">
-        <div class="kpi-icon-wrap status-safe" id="kpiStatusIconWrap">
-          <i class="fa-solid fa-shield-heart" id="kpiStatusIcon"></i>
-        </div>
-        <div class="kpi-info">
-          <span class="kpi-label">Worker Health Status</span>
-          <h2 class="kpi-value text-safe" id="kpiStatusText">NORMAL / SAFE</h2>
-          <small class="kpi-sub" id="lastUpdatedTime">Last sync: Just now</small>
-        </div>
-      </div>
+    <!-- VIEW TAB CONTAINER -->
+    <div class="content-body">
 
-      <!-- Geofence State -->
-      <div class="kpi-card" id="kpiGeofenceCard">
-        <div class="kpi-icon-wrap icon-cyan">
-          <i class="fa-solid fa-draw-polygon"></i>
-        </div>
-        <div class="kpi-info">
-          <span class="kpi-label">Geofence Boundary</span>
-          <h2 class="kpi-value text-safe" id="kpiGeofenceText">INSIDE SAFE ZONE</h2>
-          <small class="kpi-sub" id="kpiDistanceText">Dist to Perimeter: ~28m</small>
-        </div>
-      </div>
-
-      <!-- Worker Motion & Fall -->
-      <div class="kpi-card" id="kpiMotionCard">
-        <div class="kpi-icon-wrap icon-amber">
-          <i class="fa-solid fa-person-walking" id="kpiMotionIcon"></i>
-        </div>
-        <div class="kpi-info">
-          <span class="kpi-label">Activity & Posture</span>
-          <h2 class="kpi-value text-safe" id="kpiMotionText">ACTIVE (MOVING)</h2>
-          <small class="kpi-sub" id="kpiInactivityText">Inactivity: 0s / 60s threshold</small>
-        </div>
-      </div>
-
-      <!-- Ambient Gas Index -->
-      <div class="kpi-card" id="kpiGasRiskCard">
-        <div class="kpi-icon-wrap icon-danger">
-          <i class="fa-solid fa-skull-crossbones"></i>
-        </div>
-        <div class="kpi-info">
-          <span class="kpi-label">Hazard Gas Exposure</span>
-          <h2 class="kpi-value text-safe" id="kpiGasRiskText">LOW HAZARD</h2>
-          <small class="kpi-sub" id="kpiGasSummary">MQ-3, MQ-7, MQ-135 Nominal</small>
-        </div>
-      </div>
-    </section>
-
-    <!-- Mid Grid: Environmental & Gas Sensors (Hardware Telemetry) -->
-    <div class="section-label"><i class="fa-solid fa-microchip"></i> Sensor Telemetry</div>
-    <section class="telemetry-grid">
-
-      <!-- Environmental Telemetry: DHT11 -->
-      <div class="panel-card env-panel">
-        <div class="panel-header">
-          <h3><i class="fa-solid fa-temperature-half"></i> DHT11 Climate Metrics</h3>
-          <span class="chip chip-info">Ambient</span>
-        </div>
-        <div class="panel-body dual-metric-row">
-          <div class="gauge-box">
-            <div class="gauge-circle" id="tempGauge">
-              <span class="gauge-number" id="tempVal">27.5</span>
-              <span class="gauge-unit">°C</span>
+      <!-- ====================================================================
+           TAB 1: SYSTEM OVERVIEW DASHBOARD (Exact layout matching screenshot)
+           ==================================================================== -->
+      <section class="tab-pane active" id="tab-dashboard">
+        
+        <!-- 5 Top Metric Cards Row -->
+        <div class="metric-cards-row">
+          <!-- Total Devices -->
+          <div class="metric-card">
+            <div class="metric-icon-wrap icon-blue">
+              <i class="fa-solid fa-helmet-safety"></i>
             </div>
-            <div class="gauge-meta">
-              <span class="gauge-title">Temperature</span>
-              <span class="badge badge-safe" id="tempBadge">Normal</span>
-              <small>Max Safe: 42.0°C</small>
+            <div class="metric-content">
+              <span class="metric-label">TOTAL DEVICES</span>
+              <span class="metric-value" id="kpiTotalDevices">1</span>
             </div>
           </div>
 
-          <div class="gauge-box">
-            <div class="gauge-circle" id="humidGauge">
-              <span class="gauge-number" id="humidVal">62</span>
-              <span class="gauge-unit">%</span>
+          <!-- Online -->
+          <div class="metric-card">
+            <div class="metric-icon-wrap icon-green">
+              <i class="fa-solid fa-heart-pulse"></i>
             </div>
-            <div class="gauge-meta">
-              <span class="gauge-title">Humidity (RH)</span>
-              <span class="badge badge-safe" id="humidBadge">Optimal</span>
-              <small>Target: 40% - 75%</small>
+            <div class="metric-content">
+              <span class="metric-label">ONLINE</span>
+              <span class="metric-value text-green" id="kpiOnlineDevices">0</span>
+            </div>
+          </div>
+
+          <!-- Offline -->
+          <div class="metric-card">
+            <div class="metric-icon-wrap icon-slate">
+              <i class="fa-solid fa-wifi" style="position:relative">
+                <span style="position:absolute;font-size:0.8em;top:0;left:0">/</span>
+              </i>
+            </div>
+            <div class="metric-content">
+              <span class="metric-label">OFFLINE</span>
+              <span class="metric-value text-slate" id="kpiOfflineDevices">1</span>
+            </div>
+          </div>
+
+          <!-- Active Alerts -->
+          <div class="metric-card">
+            <div class="metric-icon-wrap icon-amber">
+              <i class="fa-solid fa-triangle-exclamation"></i>
+            </div>
+            <div class="metric-content">
+              <span class="metric-label">ACTIVE ALERTS</span>
+              <span class="metric-value text-amber" id="kpiActiveAlerts">0</span>
+            </div>
+          </div>
+
+          <!-- Active Zones -->
+          <div class="metric-card">
+            <div class="metric-icon-wrap icon-cyan">
+              <i class="fa-solid fa-shield-halved"></i>
+            </div>
+            <div class="metric-content">
+              <span class="metric-label">ACTIVE ZONES</span>
+              <span class="metric-value text-blue" id="kpiActiveZones">0</span>
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- Toxic Gas Detection Panel: MQ-3, MQ-7, MQ-135 -->
-      <div class="panel-card gas-panel">
-        <div class="panel-header">
-          <h3><i class="fa-solid fa-biohazard"></i> Gas Hazards (MQ Array)</h3>
-          <span class="chip chip-warning">PPM Sensor Array</span>
+        <!-- Two Main Visual Analytics Cards (Device Status + Recent Alert Frequencies) -->
+        <div class="analytics-row">
+          <!-- Left: Device Status Donut Chart -->
+          <div class="analytics-card card-device-status">
+            <div class="card-header-clean">
+              <h3>Device Status</h3>
+            </div>
+            <div class="donut-chart-container">
+              <canvas id="deviceStatusChart"></canvas>
+            </div>
+            <div class="donut-legend">
+              <span class="legend-item"><span class="legend-dot dot-online"></span> Online</span>
+              <span class="legend-item"><span class="legend-dot dot-offline"></span> Offline</span>
+            </div>
+          </div>
+
+          <!-- Right: Recent Alert Frequencies Bar Chart -->
+          <div class="analytics-card card-alert-frequencies">
+            <div class="card-header-clean">
+              <h3>Recent Alert Frequencies</h3>
+            </div>
+            <div class="bar-chart-container">
+              <canvas id="alertFrequenciesChart"></canvas>
+            </div>
+          </div>
         </div>
-        <div class="panel-body gas-meters">
-          <!-- MQ-7 Carbon Monoxide -->
-          <div class="gas-row">
-            <div class="gas-meta">
-              <div class="gas-name-wrap">
-                <span class="gas-name">MQ-7: Carbon Monoxide (CO)</span>
-                <span class="badge badge-safe" id="mq7Badge">Safe</span>
+
+        <!-- Quick Telemetry Snapshot Row (Live Sensors for Active Helmet) -->
+        <div class="section-label-sub">
+          <span><i class="fa-solid fa-wave-square"></i> Real-time Telemetry Snapshot (Worker: <strong id="snapshotWorkerId">W-101</strong>)</span>
+          <button class="link-btn" onclick="document.getElementById('navItemDevices').click()">Full Device Specs &rarr;</button>
+        </div>
+        <div class="snapshot-grid">
+          <!-- Safety State -->
+          <div class="snapshot-card" id="kpiOverallCard">
+            <div class="snapshot-icon status-safe" id="kpiStatusIconWrap">
+              <i class="fa-solid fa-shield-heart" id="kpiStatusIcon"></i>
+            </div>
+            <div class="snapshot-data">
+              <span class="snapshot-label">Health & Safety Status</span>
+              <div class="snapshot-val text-safe" id="kpiStatusText">NORMAL / SAFE</div>
+              <small id="lastUpdatedTime">Last sync: Just now</small>
+            </div>
+          </div>
+
+          <!-- Temperature & Humidity -->
+          <div class="snapshot-card">
+            <div class="snapshot-icon">
+              <i class="fa-solid fa-temperature-three-quarters" style="color:var(--accent-secondary)"></i>
+            </div>
+            <div class="snapshot-data">
+              <span class="snapshot-label">Temp & Humidity</span>
+              <div class="snapshot-val"><span id="tempVal">27.5</span>°C / <span id="humidVal">62</span>%</div>
+              <span class="badge badge-safe" id="tempBadge">Optimal</span>
+            </div>
+          </div>
+
+          <!-- Gas Risk -->
+          <div class="snapshot-card">
+            <div class="snapshot-icon">
+              <i class="fa-solid fa-skull-crossbones" style="color:var(--status-danger)"></i>
+            </div>
+            <div class="snapshot-data">
+              <span class="snapshot-label">Gas Risk Level</span>
+              <div class="snapshot-val text-safe" id="kpiGasRiskText">LOW HAZARD</div>
+              <small id="kpiGasSummary">MQ-3, MQ-7, MQ-135 Nominal</small>
+            </div>
+          </div>
+
+          <!-- Motion & Fall -->
+          <div class="snapshot-card">
+            <div class="snapshot-icon">
+              <i class="fa-solid fa-person-walking" id="kpiMotionIcon" style="color:var(--accent-primary)"></i>
+            </div>
+            <div class="snapshot-data">
+              <span class="snapshot-label">Motion (MPU-6050)</span>
+              <div class="snapshot-val text-safe" id="kpiMotionText">ACTIVE (MOVING)</div>
+              <small id="kpiInactivityText">Inactivity: 0s / 60s threshold</small>
+            </div>
+          </div>
+
+          <!-- Geofence Perimeter -->
+          <div class="snapshot-card">
+            <div class="snapshot-icon">
+              <i class="fa-solid fa-location-crosshairs" style="color:var(--status-safe)"></i>
+            </div>
+            <div class="snapshot-data">
+              <span class="snapshot-label">Geofence Status</span>
+              <div class="snapshot-val text-safe" id="kpiGeofenceText">INSIDE SAFE ZONE</div>
+              <small id="kpiDistanceText">Dist to Perimeter: ~68m</small>
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- ====================================================================
+           TAB 2: LIVE MAP (Interactive OpenStreetMap + Geofence Polygon Drawing)
+           ==================================================================== -->
+      <section class="tab-pane" id="tab-live-map">
+        <div class="map-layout-grid">
+          <!-- Main Map Card -->
+          <div class="panel-card map-panel">
+            <div class="panel-header">
+              <div class="header-left">
+                <h3><i class="fa-solid fa-location-crosshairs"></i> Live GPS & Mine Geofencing (OpenStreetMap)</h3>
+                <span class="chip chip-cyan"><i class="fa-solid fa-satellite"></i> GPS Neo-6M Active</span>
               </div>
-              <span class="gas-reading"><strong id="mq7Val">14</strong> PPM <small>/ Danger: &gt;50 PPM</small></span>
-            </div>
-            <div class="progress-bar-bg">
-              <div class="progress-fill fill-safe" id="mq7Progress" style="width: 20%;"></div>
-            </div>
-          </div>
-
-          <!-- MQ-135 Air Quality & Toxic Vapors -->
-          <div class="gas-row">
-            <div class="gas-meta">
-              <div class="gas-name-wrap">
-                <span class="gas-name">MQ-135: Toxic Gases (NH3 / NOx / Smoke / CO2)</span>
-                <span class="badge badge-safe" id="mq135Badge">Good Quality</span>
+              <div class="map-controls">
+                <button id="recenterMapBtn" class="small-btn"><i class="fa-solid fa-arrows-to-dot"></i> Recenter</button>
+                <button id="startDrawPolygonBtn" class="small-btn btn-draw"><i class="fa-solid fa-draw-polygon"></i> Draw Zone</button>
+                <button id="triggerGeofenceBreachSimBtn" class="small-btn btn-warning-sim"><i class="fa-solid fa-route"></i> Test Breach</button>
               </div>
-              <span class="gas-reading"><strong id="mq135Val">78</strong> PPM <small>/ Danger: &gt;250 PPM</small></span>
             </div>
-            <div class="progress-bar-bg">
-              <div class="progress-fill fill-safe" id="mq135Progress" style="width: 25%;"></div>
+            <div class="map-body">
+              <div id="mineMap" class="leaflet-map-frame"></div>
+            </div>
+            <div class="map-coords-bar">
+              <span>Lat: <strong id="workerLat">12.971598</strong></span>
+              <span>Lng: <strong id="workerLng">77.594566</strong></span>
+              <span>Alt: <strong id="workerAlt">922 m</strong></span>
+              <span>Sats: <strong id="workerSats">8</strong></span>
+              <span class="map-legend-inline">
+                <span class="legend-dot dot-green"></span> Safe
+                <span class="legend-dot dot-red" style="margin-left:8px"></span> Restricted
+                <span class="legend-dot dot-worker" style="margin-left:8px"></span> Worker
+              </span>
             </div>
           </div>
 
-          <!-- MQ-3 Flammable / Alcohol / Methane trace -->
-          <div class="gas-row">
-            <div class="gas-meta">
-              <div class="gas-name-wrap">
-                <span class="gas-name">MQ-3: Flammable / Hydrocarbon Vapors</span>
-                <span class="badge badge-safe" id="mq3Badge">Safe</span>
+          <!-- Zone Manager Panel on Right of Map -->
+          <div class="panel-card zone-manager-panel">
+            <div class="panel-header">
+              <h3><i class="fa-solid fa-draw-polygon"></i> Geofence Zone Manager</h3>
+              <span class="chip chip-info" id="zoneCountChip">0 Zones</span>
+            </div>
+            <div class="zone-manager-body">
+              <div class="zone-draw-hint" id="zoneDrawHint">
+                <i class="fa-solid fa-hand-pointer"></i>
+                <div>
+                  <strong>Click "Draw Zone" to start</strong>
+                  <span>Click points on map. Double-click to close the polygon.</span>
+                </div>
               </div>
-              <span class="gas-reading"><strong id="mq3Val">0.05</strong> mg/L <small>/ Danger: &gt;0.40 mg/L</small></span>
-            </div>
-            <div class="progress-bar-bg">
-              <div class="progress-fill fill-safe" id="mq3Progress" style="width: 12%;"></div>
+
+              <!-- Saved zones list -->
+              <div class="zone-list" id="zoneList"></div>
+
+              <!-- Default static zones toggles -->
+              <div class="zone-static-toggles">
+                <div class="zone-toggle-row">
+                  <span class="zone-dot zone-dot-safe"></span>
+                  <span class="zone-toggle-name">Default Safe Perimeter (180m)</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="toggleSafeCircle" checked>
+                    <span class="toggle-knob"></span>
+                  </label>
+                </div>
+                <div class="zone-toggle-row">
+                  <span class="zone-dot zone-dot-danger"></span>
+                  <span class="zone-toggle-name">Default Restricted Shaft (70m)</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="toggleDangerCircle" checked>
+                    <span class="toggle-knob"></span>
+                  </label>
+                </div>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      <!-- MPU-6050 Motion & Fall / Inactivity Analysis -->
-      <div class="panel-card mpu-panel">
-        <div class="panel-header">
-          <h3><i class="fa-solid fa-person-falling-burst"></i> MPU-6050 Motion & Inactivity</h3>
-          <span class="chip chip-accent">6-Axis IMU</span>
+      <!-- ====================================================================
+           TAB 3: DEVICES (Sensor Telemetry Gauges)
+           ==================================================================== -->
+      <section class="tab-pane" id="tab-devices">
+        <div class="section-label-sub">
+          <span><i class="fa-solid fa-microchip"></i> Live Environmental, Gas & Motion Telemetry (ESP32)</span>
         </div>
-        <div class="panel-body">
-          <div class="imu-stats-grid">
-            <div class="imu-chip">
-              <small>Total Accel (G)</small>
-              <strong id="accelTotalVal">1.02 G</strong>
+
+        <div class="devices-grid">
+          <!-- Environmental: DHT11 -->
+          <div class="panel-card">
+            <div class="panel-header">
+              <h3><i class="fa-solid fa-temperature-half"></i> Climate — DHT11</h3>
             </div>
-            <div class="imu-chip">
-              <small>Fall Threshold</small>
-              <span class="text-warning">&gt; 2.80 G Shock</span>
-            </div>
-            <div class="imu-chip">
-              <small>Inactivity Timer</small>
-              <strong id="inactivityTimerDisplay">0s</strong>
-            </div>
-            <div class="imu-chip">
-              <small>Alarm Timeout</small>
-              <span class="text-danger">&gt; 60s Static</span>
+            <div class="panel-body">
+              <div class="temp-gauge-circle" id="tempGauge">
+                <span class="temp-big" id="tempVal">27.5</span>
+                <span class="temp-unit">°C</span>
+              </div>
+              <div class="metric-subrow">
+                <div class="submetric">
+                  <span class="sublabel">Humidity</span>
+                  <strong class="subvalue"><span id="humidVal">62</span>%</strong>
+                </div>
+                <div class="submetric">
+                  <span class="sublabel">Status</span>
+                  <span class="badge badge-safe" id="tempBadge">Optimal</span>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div class="imu-axis-bars">
-            <div class="axis-line">
-              <span>Ax: <b id="axVal">0.05</b></span>
-              <div class="axis-bar"><div id="axBar" style="width: 52%;"></div></div>
+          <!-- Gas Array 1: MQ-7 (Carbon Monoxide) -->
+          <div class="panel-card">
+            <div class="panel-header">
+              <h3><i class="fa-solid fa-smog"></i> Carbon Monoxide — MQ-7</h3>
+              <span class="badge badge-safe" id="mq7Badge">Safe</span>
             </div>
-            <div class="axis-line">
-              <span>Ay: <b id="ayVal">0.12</b></span>
-              <div class="axis-bar"><div id="ayBar" style="width: 55%;"></div></div>
+            <div class="panel-body">
+              <div class="gas-main-val">
+                <span class="gas-number" id="mq7Val">14</span>
+                <span class="gas-unit">PPM</span>
+              </div>
+              <div class="progress-track">
+                <div class="progress-fill fill-safe" id="mq7Progress" style="width: 14%;"></div>
+              </div>
+              <div class="threshold-note">
+                <span>Thresholds: Warning >30 PPM · Danger >50 PPM</span>
+              </div>
             </div>
-            <div class="axis-line">
-              <span>Az: <b id="azVal">0.99</b></span>
-              <div class="axis-bar"><div id="azBar" style="width: 80%;"></div></div>
+          </div>
+
+          <!-- Gas Array 2: MQ-135 (Toxic / Air Quality) -->
+          <div class="panel-card">
+            <div class="panel-header">
+              <h3><i class="fa-solid fa-wind"></i> Air Quality / Toxic Gas — MQ-135</h3>
+              <span class="badge badge-safe" id="mq135Badge">Good Quality</span>
+            </div>
+            <div class="panel-body">
+              <div class="gas-main-val">
+                <span class="gas-number" id="mq135Val">78</span>
+                <span class="gas-unit">PPM</span>
+              </div>
+              <div class="progress-track">
+                <div class="progress-fill fill-safe" id="mq135Progress" style="width: 20%;"></div>
+              </div>
+              <div class="threshold-note">
+                <span>Detects: Ammonia (NH3), Smoke, Benzene, CO2</span>
+              </div>
             </div>
           </div>
 
-          <div class="inactivity-status-box" id="inactivityBox">
-            <i class="fa-solid fa-check-circle" id="inactivityIcon"></i>
-            <span id="inactivityNotice">Normal worker movement detected.</span>
+          <!-- Gas Array 3: MQ-3 (Flammable / Alcohol) -->
+          <div class="panel-card">
+            <div class="panel-header">
+              <h3><i class="fa-solid fa-fire-flame-curved"></i> Flammable Vapors — MQ-3</h3>
+              <span class="badge badge-safe" id="mq3Badge">Safe</span>
+            </div>
+            <div class="panel-body">
+              <div class="gas-main-val">
+                <span class="gas-number" id="mq3Val">0.05</span>
+                <span class="gas-unit">mg/L</span>
+              </div>
+              <div class="progress-track">
+                <div class="progress-fill fill-safe" id="mq3Progress" style="width: 6%;"></div>
+              </div>
+              <div class="threshold-note">
+                <span>Detects: Alcohol, Methane, Combustible fumes</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Motion & Fall: MPU-6050 -->
+          <div class="panel-card full-span-card">
+            <div class="panel-header">
+              <h3><i class="fa-solid fa-person-falling"></i> Motion & Inactivity (MPU-6050 6-Axis IMU)</h3>
+              <div class="inactivity-timer-pill">
+                <span>Motion Timer:</span>
+                <strong id="inactivityTimerDisplay">0s</strong>
+              </div>
+            </div>
+            <div class="panel-body imu-body">
+              <div class="imu-stats-col">
+                <div class="g-force-box">
+                  <span class="g-label">Total Acceleration</span>
+                  <div class="g-value" id="accelTotalVal">1.01 G</div>
+                </div>
+                <div class="axes-grid">
+                  <div class="axis-line">
+                    <span>Ax: <b id="axVal">0.05</b></span>
+                    <div class="axis-bar"><div id="axBar" style="width: 52%;"></div></div>
+                  </div>
+                  <div class="axis-line">
+                    <span>Ay: <b id="ayVal">0.12</b></span>
+                    <div class="axis-bar"><div id="ayBar" style="width: 56%;"></div></div>
+                  </div>
+                  <div class="axis-line">
+                    <span>Az: <b id="azVal">0.99</b></span>
+                    <div class="axis-bar"><div id="azBar" style="width: 80%;"></div></div>
+                  </div>
+                </div>
+              </div>
+              <div class="inactivity-status-box" id="inactivityBox">
+                <i class="fa-solid fa-check-circle" id="inactivityIcon"></i>
+                <span id="inactivityNotice">Normal worker movement detected.</span>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- Location & Geofencing Section -->
-    <div class="section-label"><i class="fa-solid fa-map-location-dot"></i> Location & Geofencing</div>
-    <section class="map-full-row">
-
-      <!-- LEFT: Live OSM Map -->
-      <div class="panel-card map-panel">
-        <div class="panel-header">
-          <div class="header-left">
-            <h3><i class="fa-solid fa-location-crosshairs"></i> Live GPS & Mine Geofencing</h3>
-            <span class="chip chip-cyan" id="gpsLockChip"><i class="fa-solid fa-satellite"></i> GPS (Neo-6M)</span>
-          </div>
-          <div class="map-controls">
-            <button id="recenterMapBtn" class="small-btn"><i class="fa-solid fa-arrows-to-dot"></i> Recenter</button>
-            <button id="startDrawPolygonBtn" class="small-btn btn-draw"><i class="fa-solid fa-draw-polygon"></i> Draw Zone</button>
-            <button id="triggerGeofenceBreachSimBtn" class="small-btn btn-warning-sim"><i class="fa-solid fa-route"></i> Test Breach</button>
-          </div>
-        </div>
-        <div class="map-body">
-          <div id="mineMap" class="leaflet-map-frame"></div>
-        </div>
-        <div class="map-coords-bar">
-          <span>Lat: <strong id="workerLat">12.971598</strong></span>
-          <span>Lng: <strong id="workerLng">77.594566</strong></span>
-          <span>Alt: <strong id="workerAlt">922 m</strong></span>
-          <span>Sats: <strong id="workerSats">8</strong></span>
-          <span class="map-legend-inline">
-            <span class="legend-dot dot-green"></span> Safe
-            <span class="legend-dot dot-red" style="margin-left:8px"></span> Restricted
-            <span class="legend-dot dot-worker" style="margin-left:8px"></span> Worker
-          </span>
-        </div>
-      </div>
-
-      <!-- RIGHT COLUMN: Zone Manager + Incident Log -->
-      <div class="right-column">
-
-        <!-- Zone Management Panel -->
-        <div class="panel-card zone-manager-panel">
+      <!-- ====================================================================
+           TAB 4: ZONES (Zone overview table)
+           ==================================================================== -->
+      <section class="tab-pane" id="tab-zones">
+        <div class="panel-card">
           <div class="panel-header">
-            <h3><i class="fa-solid fa-draw-polygon"></i> Geofence Zone Manager</h3>
-            <span class="chip chip-info" id="zoneCountChip">0 Zones</span>
+            <h3><i class="fa-solid fa-shield-halved"></i> Mine Safety Geofence Zones</h3>
+            <button class="primary-btn" onclick="document.getElementById('navItemLiveMap').click(); document.getElementById('startDrawPolygonBtn').click();">
+              <i class="fa-solid fa-plus"></i> Create New Zone on Map
+            </button>
           </div>
-          <div class="zone-manager-body">
-            <!-- Draw toolbar hint -->
-            <div class="zone-draw-hint" id="zoneDrawHint">
-              <i class="fa-solid fa-hand-pointer"></i>
+          <div class="panel-body">
+            <div class="table-responsive">
+              <table class="styled-table">
+                <thead>
+                  <tr>
+                    <th>Zone Name</th>
+                    <th>Classification</th>
+                    <th>Geometry</th>
+                    <th>Action on Breach</th>
+                    <th>Manage</th>
+                  </tr>
+                </thead>
+                <tbody id="zonesTableBody">
+                  <tr>
+                    <td><strong>Safe Mine Sector A</strong></td>
+                    <td><span class="badge badge-safe">Safe Operating Area</span></td>
+                    <td>Circle (180m radius)</td>
+                    <td>None (Authorized)</td>
+                    <td>Default</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Deep Mine Toxic Shaft</strong></td>
+                    <td><span class="badge badge-danger">Restricted Hazard</span></td>
+                    <td>Circle (70m radius)</td>
+                    <td>Immediate Siren & Alarm</td>
+                    <td>Default</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           TAB 5: ALERTS & INCIDENT FEED (With Simulation Controls)
+           ==================================================================== -->
+      <section class="tab-pane" id="tab-alerts">
+        <div class="alerts-layout-grid">
+          <!-- Real-time Incident Feed -->
+          <div class="panel-card">
+            <div class="panel-header">
+              <h3><i class="fa-solid fa-clipboard-list"></i> Real-time Incident & Alert Log</h3>
+              <button id="clearLogsBtn" class="small-btn"><i class="fa-solid fa-trash-can"></i> Clear</button>
+            </div>
+            <div class="panel-body log-list" id="alertLogsContainer">
+              <div class="log-entry log-entry-info">
+                <span class="log-time">--:--:--</span>
+                <span class="log-msg">MineGuard system online. Monitoring active sensors.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Hardware Simulation Testing Box -->
+          <div class="panel-card">
+            <div class="panel-header">
+              <h3><i class="fa-solid fa-flask"></i> Telemetry Incident Simulator</h3>
+              <span class="chip-sm">Demo Triggers</span>
+            </div>
+            <div class="panel-body">
+              <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1rem">
+                Test the audible siren, real-time alert frequencies chart, and emergency banners by triggering simulated hazards:
+              </p>
+              <div class="sim-buttons-grid">
+                <button class="sim-btn btn-toxic" id="simToxicGasBtn"><i class="fa-solid fa-wind"></i> Gas Leak (CO/NH3)</button>
+                <button class="sim-btn btn-heat" id="simHighTempBtn"><i class="fa-solid fa-fire"></i> High Temp (44°C)</button>
+                <button class="sim-btn btn-fall" id="simFallBtn"><i class="fa-solid fa-person-falling"></i> Fall Impact (3.65G)</button>
+                <button class="sim-btn btn-inactivity" id="simInactivityBtn"><i class="fa-solid fa-bed"></i> Man-Down Inactivity</button>
+                <button class="sim-btn btn-normal" id="simResetNormalBtn"><i class="fa-solid fa-rotate-left"></i> Reset All Safe</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           TAB 6: HISTORY & CLOUD SYNC
+           ==================================================================== -->
+      <section class="tab-pane" id="tab-history">
+        <div class="panel-card">
+          <div class="panel-header">
+            <h3><i class="fa-solid fa-clock-rotate-left"></i> Telemetry & Event History</h3>
+            <button class="small-btn" onclick="document.getElementById('openConfigBtn').click()"><i class="fa-solid fa-gear"></i> Supabase Config</button>
+          </div>
+          <div class="panel-body">
+            <div class="history-sync-info">
+              <i class="fa-solid fa-cloud-arrow-down"></i>
               <div>
-                <strong>Click "Draw Zone" to start</strong>
-                <span>Click on the map to place vertices. Double-click to close the polygon.</span>
+                <h4>Supabase Realtime Cloud Sync</h4>
+                <p>Telemetry packets streamed from ESP32 hardware via PostgreSQL change feeds are logged into the database and stored locally.</p>
               </div>
             </div>
-
-            <!-- Saved zones list -->
-            <div class="zone-list" id="zoneList">
-              <!-- Populated by JS -->
-            </div>
-
-            <!-- Default static zones toggle -->
-            <div class="zone-static-toggles">
-              <div class="zone-toggle-row">
-                <span class="zone-dot zone-dot-safe"></span>
-                <span class="zone-toggle-name">Default Safe Perimeter (180m)</span>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="toggleSafeCircle" checked>
-                  <span class="toggle-knob"></span>
-                </label>
-              </div>
-              <div class="zone-toggle-row">
-                <span class="zone-dot zone-dot-danger"></span>
-                <span class="zone-toggle-name">Default Restricted Shaft (70m)</span>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="toggleDangerCircle" checked>
-                  <span class="toggle-knob"></span>
-                </label>
-              </div>
+            <div class="table-responsive" style="margin-top:1rem">
+              <table class="styled-table">
+                <thead>
+                  <tr>
+                    <th>Timestamp</th>
+                    <th>Worker ID</th>
+                    <th>Status</th>
+                    <th>Temp (°C)</th>
+                    <th>CO (PPM)</th>
+                    <th>Toxic (PPM)</th>
+                    <th>Location</th>
+                  </tr>
+                </thead>
+                <tbody id="historyTableBody">
+                  <tr>
+                    <td>Just now</td>
+                    <td>W-101</td>
+                    <td><span class="badge badge-safe">Safe</span></td>
+                    <td>27.5</td>
+                    <td>14</td>
+                    <td>78</td>
+                    <td>12.971598, 77.594566</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
+      </section>
 
-        <!-- Incident Log -->
-        <div class="panel-card incident-panel">
-          <div class="panel-header">
-            <h3><i class="fa-solid fa-clipboard-list"></i> Incident & Alert Log</h3>
-            <button id="clearLogsBtn" class="small-btn"><i class="fa-solid fa-trash-can"></i> Clear</button>
-          </div>
-          <div class="panel-body log-list" id="alertLogsContainer">
-            <div class="log-entry log-entry-info">
-              <span class="log-time">--:--:--</span>
-              <span class="log-msg">MineGuard system initializing…</span>
-            </div>
-          </div>
+    </div><!-- end content-body -->
+  </div><!-- end main-wrapper -->
 
-          <!-- Simulator Box -->
-          <div class="simulator-actions-box">
-            <div class="sim-box-title">
-              <span><i class="fa-solid fa-flask"></i> Demo Triggers</span>
-              <span class="chip-sm">Simulator</span>
-            </div>
-            <div class="sim-buttons-grid">
-              <button class="sim-btn btn-toxic" id="simToxicGasBtn"><i class="fa-solid fa-wind"></i> Gas Leak</button>
-              <button class="sim-btn btn-heat" id="simHighTempBtn"><i class="fa-solid fa-fire"></i> High Temp</button>
-              <button class="sim-btn btn-fall" id="simFallBtn"><i class="fa-solid fa-person-falling"></i> Fall</button>
-              <button class="sim-btn btn-inactivity" id="simInactivityBtn"><i class="fa-solid fa-bed"></i> Inactivity</button>
-              <button class="sim-btn btn-normal" id="simResetNormalBtn"><i class="fa-solid fa-rotate-left"></i> Reset Safe</button>
-            </div>
-          </div>
-        </div>
-
-      </div><!-- end right-column -->
-    </section>
-
-  </main>
+  <!-- ========================================================================
+       MODALS
+       ======================================================================== -->
 
   <!-- Supabase Configuration Modal -->
   <div id="configModal" class="modal-backdrop hidden">
@@ -457,9 +726,10 @@
     </div>
   </div>
 
-  <!-- Scripts -->
+  <!-- Leaflet Scripts -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+  <!-- Main Application Logic -->
   <script src="app.js"></script>
 </body>
 </html>

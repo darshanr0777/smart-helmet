@@ -66,6 +66,15 @@ let sirenGain      = null;
 let simulatorInterval = null;
 let supabaseClient = null;
 
+// Chart.js Handles & Alert Statistics
+let deviceStatusChartInstance = null;
+let alertFrequenciesChartInstance = null;
+const alertStats = {
+  fall: 2,
+  geofence: 1,
+  suddenMovement: 3
+};
+
 // Persisted custom zones: [{ id, name, type, latlngs, layerRef }]
 let drawnZones = [];
 
@@ -73,6 +82,8 @@ let drawnZones = [];
 // Initialization
 // ============================================================================
 document.addEventListener('DOMContentLoaded', () => {
+  initTabNavigation();
+  initCharts();
   initLeafletMap();
   initLocalStorageConfig();
   setupEventListeners();
@@ -520,8 +531,34 @@ function evaluateOverallSafety(geofenceResult) {
     triggerAudioAlarm(false);
   }
 
+  // Update Top 5 System Overview Metric Cards
+  const kpiTotalDevices = document.getElementById('kpiTotalDevices');
+  const kpiOnlineDevices = document.getElementById('kpiOnlineDevices');
+  const kpiOfflineDevices = document.getElementById('kpiOfflineDevices');
+  const kpiActiveAlerts = document.getElementById('kpiActiveAlerts');
+  const kpiActiveZones = document.getElementById('kpiActiveZones');
+  const snapshotWorkerId = document.getElementById('snapshotWorkerId');
+  const navAlertBadge = document.getElementById('navAlertBadge');
+
+  if (kpiTotalDevices) kpiTotalDevices.textContent = '1';
+  if (kpiOnlineDevices) kpiOnlineDevices.textContent = (state.dataSource === 'supabase' || state.dataSource === 'sim') ? '1' : '0';
+  if (kpiOfflineDevices) kpiOfflineDevices.textContent = (state.dataSource === 'supabase' || state.dataSource === 'sim') ? '0' : '1';
+  if (kpiActiveAlerts) kpiActiveAlerts.textContent = hazards.length.toString();
+  if (kpiActiveZones) kpiActiveZones.textContent = (drawnZones.length).toString();
+  if (snapshotWorkerId) snapshotWorkerId.textContent = state.activeWorker;
+
+  if (navAlertBadge) {
+    if (hazards.length > 0) {
+      navAlertBadge.textContent = hazards.length.toString();
+      navAlertBadge.classList.remove('hidden');
+    } else {
+      navAlertBadge.classList.add('hidden');
+    }
+  }
+
   const now = new Date();
-  document.getElementById('lastUpdatedTime').textContent = `Last sync: ${now.toLocaleTimeString()}`;
+  const lastSyncEl = document.getElementById('lastUpdatedTime');
+  if (lastSyncEl) lastSyncEl.textContent = `Last sync: ${now.toLocaleTimeString()}`;
 }
 
 // ============================================================================
@@ -705,6 +742,8 @@ function setupEventListeners() {
     state.telemetry.lat = state.dangerZoneCenter.lat;
     state.telemetry.lng = state.dangerZoneCenter.lng;
     logIncident('danger', 'GEOFENCE ALERT: Worker has entered Restricted Hazard Shaft!');
+    alertStats.geofence++;
+    updateAlertFrequenciesChart();
     updateDashboardUI();
     if (mapInstance) {
       mapInstance.setView([state.telemetry.lat, state.telemetry.lng], 18, { animate: true });
@@ -716,6 +755,8 @@ function setupEventListeners() {
     state.telemetry.mq7_co = 72; // Above 50 PPM danger
     state.telemetry.mq135_air = 310; // Above 250 PPM danger
     logIncident('danger', 'SIMULATION TRIGGER: Carbon Monoxide (72 PPM) and Ammonia gas leak!');
+    alertStats.suddenMovement++;
+    updateAlertFrequenciesChart();
     updateDashboardUI();
   });
 
@@ -723,6 +764,8 @@ function setupEventListeners() {
     state.telemetry.temp = 44.5; // Above 42°C danger
     state.telemetry.humidity = 88;
     logIncident('danger', 'SIMULATION TRIGGER: Mine shaft extreme heat wave (44.5°C)!');
+    alertStats.suddenMovement++;
+    updateAlertFrequenciesChart();
     updateDashboardUI();
   });
 
@@ -730,12 +773,16 @@ function setupEventListeners() {
     state.isFallDetected = true;
     state.telemetry.accelTotal = 3.65; // High impact shock (> 2.80G)
     logIncident('danger', 'SIMULATION TRIGGER: 3.65G impact registered. Worker fall detected!');
+    alertStats.fall++;
+    updateAlertFrequenciesChart();
     updateDashboardUI();
   });
 
   document.getElementById('simInactivityBtn').addEventListener('click', () => {
     state.inactivitySeconds = 65; // Above 60s timeout
     logIncident('danger', 'SIMULATION TRIGGER: Worker inactive and unresponsive for 65 seconds!');
+    alertStats.suddenMovement++;
+    updateAlertFrequenciesChart();
     updateDashboardUI();
   });
 
@@ -1114,5 +1161,194 @@ function loadZonesFromStorage() {
   renderZoneList();
   if (drawnZones.length > 0) {
     logIncident('info', `Loaded ${drawnZones.length} saved geofence zone(s) from storage.`);
+  }
+}
+
+// ============================================================================
+// Chart.js Visual Analytics Engine
+// ============================================================================
+function initCharts() {
+  if (typeof Chart === 'undefined') return;
+
+  // 1. Donut Chart — Device Status (Matching Screenshot)
+  const ctxDonut = document.getElementById('deviceStatusChart');
+  if (ctxDonut) {
+    deviceStatusChartInstance = new Chart(ctxDonut, {
+      type: 'doughnut',
+      data: {
+        labels: ['Online', 'Offline'],
+        datasets: [{
+          data: [1, 0], // Matches 1 Online, 0 Offline (or [1, 2])
+          backgroundColor: ['#10B981', '#334155'],
+          borderColor: '#0F1B38',
+          borderWidth: 5,
+          hoverOffset: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '76%',
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#14244B',
+            borderColor: '#182A56',
+            borderWidth: 1,
+            titleColor: '#fff',
+            bodyColor: '#8E9EB8',
+            callbacks: {
+              label: (context) => ` ${context.label}: ${context.raw} Device${context.raw !== 1 ? 's' : ''}`
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // 2. Bar Chart — Recent Alert Frequencies (Matching Screenshot)
+  const ctxBar = document.getElementById('alertFrequenciesChart');
+  if (ctxBar) {
+    alertFrequenciesChartInstance = new Chart(ctxBar, {
+      type: 'bar',
+      data: {
+        labels: ['FALL DETECTED', 'GEOFENCE BREACH', 'SUDDEN MOVEMENT'],
+        datasets: [{
+          label: 'Alert Count',
+          data: [alertStats.fall, alertStats.geofence, alertStats.suddenMovement],
+          backgroundColor: '#3B82F6',
+          borderRadius: 3,
+          borderSkipped: false,
+          barPercentage: 0.72,
+          categoryPercentage: 0.8
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#14244B',
+            borderColor: '#182A56',
+            borderWidth: 1,
+            titleColor: '#fff',
+            bodyColor: '#8E9EB8'
+          }
+        },
+        scales: {
+          x: {
+            grid: { display: false },
+            ticks: {
+              color: '#8E9EB8',
+              font: { family: 'Inter', size: 10, weight: '600' }
+            }
+          },
+          y: {
+            min: 0,
+            max: 4,
+            ticks: {
+              stepSize: 1,
+              color: '#8E9EB8',
+              font: { family: 'Inter', size: 11 }
+            },
+            grid: {
+              color: '#182A56',
+              drawBorder: false
+            }
+          }
+        }
+      }
+    });
+  }
+}
+
+function updateAlertFrequenciesChart() {
+  if (!alertFrequenciesChartInstance) return;
+  alertFrequenciesChartInstance.data.datasets[0].data = [
+    alertStats.fall,
+    alertStats.geofence,
+    alertStats.suddenMovement
+  ];
+  // Auto-scale y-axis max if incidents exceed 4
+  const maxVal = Math.max(...alertFrequenciesChartInstance.data.datasets[0].data);
+  alertFrequenciesChartInstance.options.scales.y.max = Math.max(4, maxVal + 1);
+  alertFrequenciesChartInstance.update();
+}
+
+// ============================================================================
+// Sidebar Tab Switching Navigation
+// ============================================================================
+function initTabNavigation() {
+  const navLinks = document.querySelectorAll('.sidebar-nav .nav-link');
+  const tabPanes = document.querySelectorAll('.tab-pane');
+  const viewTitle = document.getElementById('viewMainTitle');
+
+  const titles = {
+    'tab-dashboard': 'System Overview',
+    'tab-live-map':  'Live GPS & Geofencing Map',
+    'tab-devices':   'Worker Device Telemetry',
+    'tab-zones':     'Safety Geofence Zones',
+    'tab-alerts':    'Alerts & Incident Center',
+    'tab-history':   'Historical Telemetry Logs'
+  };
+
+  navLinks.forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      const targetTabId = link.getAttribute('data-tab');
+      if (!targetTabId) return;
+
+      navLinks.forEach(l => l.classList.remove('active'));
+      link.classList.add('active');
+
+      tabPanes.forEach(pane => {
+        if (pane.id === targetTabId) {
+          pane.classList.add('active');
+        } else {
+          pane.classList.remove('active');
+        }
+      });
+
+      if (viewTitle && titles[targetTabId]) {
+        viewTitle.textContent = titles[targetTabId];
+      }
+
+      // Invalidate map size so Leaflet recalculates correctly when opening Live Map
+      if (targetTabId === 'tab-live-map' && mapInstance) {
+        setTimeout(() => {
+          mapInstance.invalidateSize();
+        }, 150);
+      }
+
+      // Close mobile drawer if opened
+      const sidebar = document.getElementById('appSidebar');
+      if (sidebar && sidebar.classList.contains('open')) {
+        sidebar.classList.remove('open');
+      }
+    });
+  });
+
+  // Mobile sidebar controls
+  const toggleBtn = document.getElementById('sidebarToggleBtn');
+  const closeBtn  = document.getElementById('sidebarCloseBtn');
+  const sidebar   = document.getElementById('appSidebar');
+
+  if (toggleBtn && sidebar) {
+    toggleBtn.addEventListener('click', () => sidebar.classList.add('open'));
+  }
+  if (closeBtn && sidebar) {
+    closeBtn.addEventListener('click', () => sidebar.classList.remove('open'));
+  }
+
+  // Logout button demo
+  const logoutBtn = document.getElementById('logoutBtn');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', () => {
+      if (confirm('Are you sure you want to log out of the supervisor dashboard?')) {
+        logIncident('info', 'Supervisor session logged out.');
+        alert('You have logged out.');
+      }
+    });
   }
 }
