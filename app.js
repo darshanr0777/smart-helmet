@@ -11,6 +11,9 @@ const state = {
   alarmActive: false,
   inactivitySeconds: 0,
   isFallDetected: false,
+  isDeviceOnline: true,
+  lastTelemetryTimestamp: Date.now(),
+  lastTelemetryId: 0,
   
   // Geofencing Center & Mine Boundaries (Latitude, Longitude, Radius in meters)
   mineSiteCenter: { lat: 12.971598, lng: 77.594566 },
@@ -92,7 +95,13 @@ document.addEventListener('DOMContentLoaded', () => {
   initLocalStorageConfig();
   setupEventListeners();
   startSimulator();
+  updateDashboardUI();
   logIncident('info', 'System online. Monitoring sensors for worker ' + state.activeWorker);
+
+  // Watchdog: refresh online/offline status every 3 seconds
+  setInterval(() => {
+    updateDashboardUI();
+  }, 3000);
 });
 
 // ============================================================================
@@ -348,8 +357,12 @@ function updateDashboardUI() {
   const d = state.telemetry;
 
   // 1. Environmental: DHT11
-  document.getElementById('tempVal').textContent = d.temp.toFixed(1);
-  document.getElementById('humidVal').textContent = Math.round(d.humidity);
+  document.querySelectorAll('[id="tempVal"]').forEach(el => {
+    el.textContent = d.temp.toFixed(1);
+  });
+  document.querySelectorAll('[id="humidVal"]').forEach(el => {
+    el.textContent = Math.round(d.humidity);
+  });
   
   const tempGauge = document.getElementById('tempGauge');
   const tempBadge = document.getElementById('tempBadge');
@@ -580,9 +593,25 @@ function evaluateOverallSafety(geofenceResult) {
   const snapshotWorkerId = document.getElementById('snapshotWorkerId');
   const navAlertBadge = document.getElementById('navAlertBadge');
 
+  // Dynamic Online/Offline Detection:
+  // In simulator mode: online.
+  // In Supabase mode: online if packet received within last 20 seconds.
+  const isOnline = state.dataSource === 'sim' 
+    ? true 
+    : Boolean(state.lastTelemetryTimestamp && (Date.now() - state.lastTelemetryTimestamp < 20000));
+  state.isDeviceOnline = isOnline;
+
   if (kpiTotalDevices) kpiTotalDevices.textContent = '1';
-  if (kpiOnlineDevices) kpiOnlineDevices.textContent = (state.dataSource === 'supabase' || state.dataSource === 'sim') ? '1' : '0';
-  if (kpiOfflineDevices) kpiOfflineDevices.textContent = (state.dataSource === 'supabase' || state.dataSource === 'sim') ? '0' : '1';
+  if (kpiOnlineDevices) kpiOnlineDevices.textContent = isOnline ? '1' : '0';
+  if (kpiOfflineDevices) kpiOfflineDevices.textContent = isOnline ? '0' : '1';
+
+  // Dynamic Donut Chart update (matches live Online/Offline count)
+  if (deviceStatusChartInstance && deviceStatusChartInstance.data && deviceStatusChartInstance.data.datasets) {
+    deviceStatusChartInstance.data.datasets[0].data = isOnline ? [1, 0] : [0, 1];
+    deviceStatusChartInstance.data.datasets[0].backgroundColor = isOnline ? ['#10B981', '#334155'] : ['#334155', '#EF4444'];
+    deviceStatusChartInstance.update('none');
+  }
+
   if (kpiActiveAlerts) kpiActiveAlerts.textContent = hazards.length.toString();
   if (kpiActiveZones) kpiActiveZones.textContent = (drawnZones.length).toString();
   if (snapshotWorkerId) snapshotWorkerId.textContent = state.activeWorker;
@@ -1014,22 +1043,59 @@ function saveSupabaseConfig() {
   }
 }
 
+let supabasePollingTimer = null;
+
+async function fetchLatestSupabaseTelemetry() {
+  if (!supabaseClient || state.dataSource !== 'supabase') return;
+  try {
+    const { data, error } = await supabaseClient
+      .from('helmet_telemetry')
+      .select('*')
+      .order('id', { ascending: false })
+      .limit(1);
+
+    if (error) {
+      console.warn('[Supabase Fetch] Error:', error.message);
+      return;
+    }
+
+    if (data && data.length > 0) {
+      const row = data[0];
+      if (row.id !== state.lastTelemetryId) {
+        state.lastTelemetryId = row.id;
+        receiveHardwareTelemetry(row);
+      }
+    }
+  } catch (err) {
+    console.warn('[Supabase Fetch] Exception:', err);
+  }
+}
+
 function initSupabaseConnection(url, key) {
   if (!window.supabase) {
     console.error('Supabase client library not loaded');
     return;
   }
 
+  if (supabasePollingTimer) {
+    clearInterval(supabasePollingTimer);
+    supabasePollingTimer = null;
+  }
+
   try {
     supabaseClient = window.supabase.createClient(url, key);
     document.getElementById('connectionStatusText').textContent = 'CONNECTING SUPABASE...';
 
-    // Subscribe to Realtime inserts on 'helmet_telemetry' table
+    // 1. Immediate fetch on connection so dashboard has latest state without waiting
+    fetchLatestSupabaseTelemetry();
+
+    // 2. Subscribe to Realtime inserts on 'helmet_telemetry' table
     supabaseClient
       .channel('public:helmet_telemetry')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'helmet_telemetry' }, (payload) => {
         const row = payload.new;
-        if (row.worker_id === state.activeWorker || !row.worker_id) {
+        if (row && (row.worker_id === state.activeWorker || !row.worker_id)) {
+          state.lastTelemetryId = row.id;
           receiveHardwareTelemetry(row);
         }
       })
@@ -1037,10 +1103,18 @@ function initSupabaseConnection(url, key) {
         if (status === 'SUBSCRIBED') {
           document.getElementById('connectionStatusText').textContent = 'SUPABASE CLOUD LIVE';
           logIncident('safe', 'Connected to Supabase Realtime channel.');
+          fetchLatestSupabaseTelemetry();
         } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
           document.getElementById('connectionStatusText').textContent = 'SUPABASE OFFLINE';
         }
       });
+
+    // 3. Resilient Polling Fallback (every 2.5 seconds)
+    // Ensures telemetry updates smoothly even if WebSockets are blocked or Realtime replication isn't configured in Postgres
+    supabasePollingTimer = setInterval(() => {
+      fetchLatestSupabaseTelemetry();
+    }, 2500);
+
   } catch (err) {
     console.error('Failed to init Supabase:', err);
     logIncident('warning', 'Failed to connect to Supabase: ' + err.message);
@@ -1048,30 +1122,51 @@ function initSupabaseConnection(url, key) {
 }
 
 function receiveHardwareTelemetry(row) {
-  if (row.temperature !== undefined) {
+  // Update heartbeat for live Online/Offline status
+  state.lastTelemetryTimestamp = Date.now();
+  state.isDeviceOnline = true;
+
+  if (row.temperature != null) {
     const newTemp = parseFloat(row.temperature);
-    // Log a specific heat alert when temperature crosses the danger threshold
-    if (newTemp >= state.thresholds.tempMax && state.telemetry.temp < state.thresholds.tempMax) {
-      logIncident('danger',
-        `\uD83D\uDD25 HEAT ALERT: Temperature rose to ${newTemp.toFixed(1)}\u00b0C — exceeds ${state.thresholds.tempMax}\u00b0C safety limit! Evacuate worker immediately.`);
-      playTemperatureAlertSound();
-    } else if (newTemp < state.thresholds.tempMax && state.telemetry.temp >= state.thresholds.tempMax) {
-      logIncident('safe', `Temperature dropped to ${newTemp.toFixed(1)}\u00b0C — back within safe range.`);
+    if (!isNaN(newTemp)) {
+      if (newTemp >= state.thresholds.tempMax && state.telemetry.temp < state.thresholds.tempMax) {
+        logIncident('danger',
+          `🔥 HEAT ALERT: Temperature rose to ${newTemp.toFixed(1)}°C — exceeds ${state.thresholds.tempMax}°C safety limit! Evacuate worker immediately.`);
+        playTemperatureAlertSound();
+      } else if (newTemp < state.thresholds.tempMax && state.telemetry.temp >= state.thresholds.tempMax) {
+        logIncident('safe', `Temperature dropped to ${newTemp.toFixed(1)}°C — back within safe range.`);
+      }
+      state.telemetry.temp = newTemp;
     }
-    state.telemetry.temp = newTemp;
   }
-  if (row.humidity !== undefined) state.telemetry.humidity = parseFloat(row.humidity);
-  if (row.mq7_co    !== undefined) state.telemetry.mq7_co    = parseFloat(row.mq7_co);
-  if (row.mq135_air !== undefined) state.telemetry.mq135_air = parseFloat(row.mq135_air);
-  // MQ-2: new dedicated column (dht11_supabase_esp32.ino v3.0)
-  if (row.mq2_smoke !== undefined) state.telemetry.mq2_smoke = parseFloat(row.mq2_smoke);
-  // MQ-3: legacy column (smart_helmet_esp32.ino)
-  if (row.mq3_gas   !== undefined) state.telemetry.mq3_gas   = parseFloat(row.mq3_gas);
-  if (row.latitude !== undefined) state.telemetry.lat = parseFloat(row.latitude);
-  if (row.longitude !== undefined) state.telemetry.lng = parseFloat(row.longitude);
-  if (row.accel_total !== undefined) state.telemetry.accelTotal = parseFloat(row.accel_total);
-  if (row.is_fall !== undefined) state.isFallDetected = Boolean(row.is_fall);
-  if (row.inactivity_secs !== undefined) state.inactivitySeconds = parseInt(row.inactivity_secs);
+
+  if (row.humidity != null && !isNaN(parseFloat(row.humidity))) {
+    state.telemetry.humidity = parseFloat(row.humidity);
+  }
+  if (row.mq7_co != null && !isNaN(parseFloat(row.mq7_co))) {
+    state.telemetry.mq7_co = parseFloat(row.mq7_co);
+  }
+  if (row.mq135_air != null && !isNaN(parseFloat(row.mq135_air))) {
+    state.telemetry.mq135_air = parseFloat(row.mq135_air);
+  }
+
+  // MQ-2 (Smoke / LPG / Flammable Gas):
+  // Check if dedicated mq2_smoke column exists; if null/undefined, fall back to mq3_gas where earlier firmware sent it
+  if (row.mq2_smoke != null && !isNaN(parseFloat(row.mq2_smoke))) {
+    state.telemetry.mq2_smoke = parseFloat(row.mq2_smoke);
+  } else if (row.mq3_gas != null && !isNaN(parseFloat(row.mq3_gas))) {
+    state.telemetry.mq2_smoke = parseFloat(row.mq3_gas);
+  }
+
+  if (row.mq3_gas != null && !isNaN(parseFloat(row.mq3_gas))) {
+    state.telemetry.mq3_gas = parseFloat(row.mq3_gas);
+  }
+
+  if (row.latitude != null && !isNaN(parseFloat(row.latitude))) state.telemetry.lat = parseFloat(row.latitude);
+  if (row.longitude != null && !isNaN(parseFloat(row.longitude))) state.telemetry.lng = parseFloat(row.longitude);
+  if (row.accel_total != null && !isNaN(parseFloat(row.accel_total))) state.telemetry.accelTotal = parseFloat(row.accel_total);
+  if (row.is_fall != null) state.isFallDetected = Boolean(row.is_fall);
+  if (row.inactivity_secs != null && !isNaN(parseInt(row.inactivity_secs))) state.inactivitySeconds = parseInt(row.inactivity_secs);
 
   logIncident('info', `Hardware payload received from ESP32 (${state.activeWorker}).`);
   updateDashboardUI();

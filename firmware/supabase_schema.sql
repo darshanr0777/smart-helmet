@@ -128,13 +128,24 @@ CREATE POLICY "Allow anon insert alerts"
 -- ============================================================================
 -- STEP 4: Enable Realtime so the Web Dashboard updates live via WebSocket
 -- ============================================================================
-BEGIN;
-  DROP PUBLICATION IF EXISTS supabase_realtime;
-  CREATE PUBLICATION supabase_realtime;
-COMMIT;
+DO $$
+BEGIN
+  BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.helmet_telemetry;
+  EXCEPTION WHEN duplicate_object THEN
+    -- Table already in publication, safe to continue
+    NULL;
+  END;
 
-ALTER PUBLICATION supabase_realtime ADD TABLE public.helmet_telemetry;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.mine_alerts;
+  BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.mine_alerts;
+  EXCEPTION WHEN duplicate_object THEN
+    -- Table already in publication, safe to continue
+    NULL;
+  END;
+END $$;
+
+ALTER TABLE public.helmet_telemetry REPLICA IDENTITY FULL;
 
 
 -- ============================================================================

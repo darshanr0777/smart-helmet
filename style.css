@@ -713,8 +713,117 @@ html, body {
 }
 
 /* ==========================================================================
-   TAB 2: LIVE MAP (FULL OPENSTREETMAP & GEOFENCING)
+   TAB 2: LIVE MAP (FULL-WIDTH IMMERSIVE SATELLITE MAP — WRISTB STYLE)
    ========================================================================== */
+.live-map-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.15rem;
+}
+
+.live-map-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.live-map-title {
+  font-family: var(--font-display);
+  font-size: 1.55rem;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.live-map-subtitle {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.live-map-status-legend {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-pill);
+  padding: 0.45rem 1.15rem;
+}
+
+.status-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.dot-online { background-color: var(--status-safe); }
+.dot-breach { background-color: var(--status-danger); }
+.dot-offline{ background-color: #64748B; }
+
+.full-map-card {
+  position: relative;
+  width: 100%;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-card);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+  background: #091224;
+}
+
+.full-map-canvas {
+  width: 100%;
+  height: calc(100vh - 230px);
+  min-height: 600px;
+}
+
+.map-floating-controls {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 1000;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.floating-btn {
+  background: rgba(15, 27, 56, 0.88);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.45rem 0.85rem;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+  transition: var(--ease);
+}
+
+.floating-btn:hover {
+  background: var(--bg-elevated);
+  border-color: var(--brand-blue);
+  transform: translateY(-1px);
+}
+
+.floating-btn.btn-danger-pill {
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #FCA5A5;
+}
+
+.floating-btn.btn-danger-pill:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fff;
+}
+
 .map-layout-grid {
   display: grid;
   grid-template-columns: 1fr 340px;
