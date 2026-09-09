@@ -506,13 +506,14 @@ function updateDashboardUI() {
 // ============================================================================
 // Overall Safety & Alert Engine
 // ============================================================================
-// Robust acknowledgment: tracks the exact set of hazards the operator silenced.
-// Banner re-triggers only when a BRAND NEW hazard signature appears.
+// Time-based acknowledgment:
+// Once the operator clicks Acknowledge, the banner is suppressed for
+// SUPPRESS_MS (5 minutes). A NEW DANGER always overrides a suppressed WARNING.
 let isAlertSilencedByOperator = false;
-let acknowledgedHazardSignature = '';   // e.g. '☠️ Carbon Monoxide Danger'
-let lastComputedHazardSig = '';         // updated every evaluateOverallSafety() call
-let allClearTimestamp = 0;              // ms timestamp when hazards first went to 0
-const ALL_CLEAR_HOLD_MS = 10000;        // Must stay clear 10 s before resetting ack
+let lastComputedHazardSig     = '';      // last hazard signature evaluated
+let suppressUntilMs           = 0;       // epoch ms until which banner is suppressed
+let suppressedSeverity        = '';      // 'warning' | 'danger' — severity at ack time
+const SUPPRESS_MS = 5 * 60 * 1000;      // 5 minutes
 
 function evaluateOverallSafety(geofenceResult) {
   const d = state.telemetry;
@@ -561,26 +562,30 @@ function evaluateOverallSafety(geofenceResult) {
     hazards.push(`⚠️ Worker Inactive (>60s)`);
   }
 
-  // Build a compact signature of current hazards for comparison
+  // Build a compact signature of current hazards
   const currentHazardSig = hazards.concat(warnings).join('|');
-  lastComputedHazardSig = currentHazardSig; // expose for dismiss button
+  lastComputedHazardSig = currentHazardSig;
 
-  // If a NEW hazard set appears that differs from what was acknowledged → re-arm banner
-  if (isAlertSilencedByOperator && currentHazardSig !== acknowledgedHazardSignature && currentHazardSig !== '') {
-    isAlertSilencedByOperator = false;
-    acknowledgedHazardSignature = '';
+  // --- Suppression Logic ---
+  const now = Date.now();
+  const currentSeverity = hazards.length > 0 ? 'danger' : (warnings.length > 0 ? 'warning' : 'safe');
+
+  if (isAlertSilencedByOperator) {
+    // Un-suppress if:
+    //  a) suppression window has expired, OR
+    //  b) severity ESCALATED from warning → danger (operator must see new danger)
+    if (now >= suppressUntilMs) {
+      isAlertSilencedByOperator = false;
+    } else if (suppressedSeverity === 'warning' && currentSeverity === 'danger') {
+      // Escalation: new DANGER while only a WARNING was acknowledged
+      isAlertSilencedByOperator = false;
+    }
   }
 
-  // Reset acknowledgment only after conditions have been fully clear for ALL_CLEAR_HOLD_MS
-  if (hazards.length === 0 && warnings.length === 0) {
-    if (allClearTimestamp === 0) allClearTimestamp = Date.now();
-    if (Date.now() - allClearTimestamp >= ALL_CLEAR_HOLD_MS) {
-      isAlertSilencedByOperator = false;
-      acknowledgedHazardSignature = '';
-      allClearTimestamp = 0;
-    }
-  } else {
-    allClearTimestamp = 0; // reset the clear-hold timer if hazards reappear
+  // If everything is safe, clear the suppression immediately
+  if (currentSeverity === 'safe') {
+    isAlertSilencedByOperator = false;
+    suppressUntilMs = 0;
   }
 
   const kpiStatusIconWrap = document.getElementById('kpiStatusIconWrap');
@@ -985,14 +990,15 @@ function setupEventListeners() {
 
   // Dismiss / Acknowledge Emergency Banner
   document.getElementById('dismissAlertBtn').addEventListener('click', () => {
-    // Capture the EXACT hazard signature computed by evaluateOverallSafety
-    // so the acknowledgment only silences this specific combination of alerts
-    acknowledgedHazardSignature = lastComputedHazardSig;
+    const now = Date.now();
+    // Detect severity at time of ack so escalation can re-arm the banner
+    suppressedSeverity        = lastComputedHazardSig.includes('Danger') ? 'danger' : 'warning';
     isAlertSilencedByOperator = true;
-    allClearTimestamp = 0;
+    suppressUntilMs           = now + SUPPRESS_MS; // silence for 5 minutes
     document.getElementById('emergencyBanner').classList.add('hidden');
     stopSirenSound();
-    logIncident('info', `⚠️ Alert ACKNOWLEDGED. Banner silenced until conditions change.`);
+    const expiry = new Date(suppressUntilMs).toLocaleTimeString();
+    logIncident('info', `✅ Alert ACKNOWLEDGED. Banner suppressed for 5 min (until ${expiry}).`);
     updateDashboardUI();
   });
 
