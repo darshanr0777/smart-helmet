@@ -459,7 +459,7 @@ bool sendToSupabase(float temp, float humid,
   body += "\"worker_id\":\""   + String(WORKER_ID)     + "\",";
   body += "\"temperature\":"   + String(temp,   2)      + ",";
   body += "\"humidity\":"      + String(humid,  2)      + ",";
-  body += "\"mq3_gas\":"       + String(mq2,    2)      + ",";   // MQ-2 → mq3_gas column
+  body += "\"mq2_smoke\":"     + String(mq2,    2)      + ",";   // MQ-2 → dedicated mq2_smoke column
   body += "\"mq7_co\":"        + String(mq7,    2)      + ",";
   body += "\"mq135_air\":"     + String(mq135,  2)      + ",";
   body += "\"alert_level\":\"" + alertLevel             + "\"";
