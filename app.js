@@ -506,66 +506,82 @@ function updateDashboardUI() {
 // ============================================================================
 // Overall Safety & Alert Engine
 // ============================================================================
+// Robust acknowledgment: tracks the exact set of hazards the operator silenced.
+// Banner re-triggers only when a BRAND NEW hazard signature appears.
+let isAlertSilencedByOperator = false;
+let acknowledgedHazardSignature = '';   // e.g. '☠️ Carbon Monoxide Danger'
+let lastComputedHazardSig = '';         // updated every evaluateOverallSafety() call
+let allClearTimestamp = 0;              // ms timestamp when hazards first went to 0
+const ALL_CLEAR_HOLD_MS = 10000;        // Must stay clear 10 s before resetting ack
+
 function evaluateOverallSafety(geofenceResult) {
   const d = state.telemetry;
   let hazards = [];
   let warnings = [];
 
-  // MQ-7: Carbon Monoxide (Warning >= 35 PPM, Danger 50–100 PPM)
+  // ── MQ-7: Carbon Monoxide (Warning >= 35 PPM, Danger >= 50 PPM) ──────────
   if (d.mq7_co >= state.thresholds.mq7Danger) {
-    hazards.push(`☠️ MQ-7 DANGER: Lethal Carbon Monoxide (${Math.round(d.mq7_co)} PPM >= 50 PPM)`);
+    hazards.push(`☠️ Carbon Monoxide Danger`);
   } else if (d.mq7_co >= state.thresholds.mq7Warning) {
-    warnings.push(`⚠️ MQ-7 Warning: Elevated Carbon Monoxide (${Math.round(d.mq7_co)} PPM >= 35 PPM)`);
+    warnings.push(`⚠️ Carbon Monoxide Warning`);
   }
 
-  // MQ-135: Air Quality / Toxic Gas (Warning >= 25 PPM, Danger >= 50 PPM)
+  // ── MQ-135: Toxic Air Quality (Warning >= 25 PPM, Danger >= 50 PPM) ──────
   if (d.mq135_air >= state.thresholds.mq135Danger) {
-    hazards.push(`☣️ MQ-135 DANGER: Toxic Gas Breach (${Math.round(d.mq135_air)} PPM >= 50 PPM)`);
+    hazards.push(`☣️ Toxic Gas Danger`);
   } else if (d.mq135_air >= state.thresholds.mq135Warning) {
-    warnings.push(`⚠️ MQ-135 Warning: Poor Air Quality (${Math.round(d.mq135_air)} PPM >= 25 PPM)`);
+    warnings.push(`⚠️ Air Quality Warning`);
   }
 
-  // MQ-2: Smoke / LPG / Flammable Gas (Warning >= 5000 PPM, Danger >= 10000 PPM)
+  // ── MQ-2: Smoke / Flammable Gas (Warning >= 5000 PPM, Danger >= 10000 PPM) ─
   if (d.mq2_smoke >= state.thresholds.mq2Danger) {
-    hazards.push(`🔥 MQ-2 DANGER: Explosive Smoke / Flammable Gas (${Math.round(d.mq2_smoke)} PPM >= 10000 PPM)`);
+    hazards.push(`🔥 Flammable Gas Danger`);
   } else if (d.mq2_smoke >= state.thresholds.mq2Warning) {
-    warnings.push(`⚠️ MQ-2 Warning: Smoke / Gas Traces (${Math.round(d.mq2_smoke)} PPM >= 5000 PPM)`);
+    warnings.push(`⚠️ Flammable Gas Warning`);
   }
 
-  // DHT11 Temperature
+  // ── DHT11: Temperature ──────────────────────────────────────────────────
   if (d.temp >= state.thresholds.tempMax) {
-    hazards.push(`Critical High Heat: ${d.temp.toFixed(1)}°C (>= 40°C)`);
+    hazards.push(`🌡️ High Temperature Alert`);
     playTemperatureAlertSound();
   } else if (d.temp >= state.thresholds.tempWarning) {
-    warnings.push(`Elevated Heat Warning: ${d.temp.toFixed(1)}°C (>= 35°C)`);
+    warnings.push(`⚠️ Elevated Temperature Warning`);
   }
 
+  // ── Movement & Geofencing ────────────────────────────────────────────────
   if (geofenceResult.status === 'BREACH_RESTRICTED') {
-    hazards.push(`Restricted Hazard Chamber Entered!`);
+    hazards.push(`⛔ Restricted Zone Breach`);
   } else if (geofenceResult.status === 'OUT_OF_BOUNDS') {
-    hazards.push(`Worker Outside Safe Mine Perimeter!`);
+    hazards.push(`📍 Outside Safe Perimeter`);
   }
   if (state.isFallDetected) {
-    hazards.push(`Severe Fall Impact Shock Detected!`);
+    hazards.push(`🚨 Worker Fall Impact`);
   }
   if (state.inactivitySeconds >= state.thresholds.inactivityTimeout) {
-    hazards.push(`Unresponsive Worker: No movement for >60s`);
+    hazards.push(`⚠️ Worker Inactive (>60s)`);
   }
 
-  // Generate normalized signatures of active conditions (strips numerical fluctuations so acknowledgment sticks)
-  const normalize = (arr) => arr.map(msg => msg.replace(/[0-9.]+\s*(PPM|°C|%|G)/gi, '').trim()).sort().join('|');
-  const hazardSig = hazards.length > 0 ? normalize(hazards) : '';
-  const warningSig = warnings.length > 0 ? normalize(warnings) : '';
-  const currentSig = hazardSig || warningSig;
+  // Build a compact signature of current hazards for comparison
+  const currentHazardSig = hazards.concat(warnings).join('|');
+  lastComputedHazardSig = currentHazardSig; // expose for dismiss button
 
-  state.activeHazardsKey = currentSig;
-
-  // If hazards and warnings have completely cleared, reset acknowledgment so new future hazards alert freshly
-  if (!currentSig) {
-    state.acknowledgedAlertKey = null;
+  // If a NEW hazard set appears that differs from what was acknowledged → re-arm banner
+  if (isAlertSilencedByOperator && currentHazardSig !== acknowledgedHazardSignature && currentHazardSig !== '') {
+    isAlertSilencedByOperator = false;
+    acknowledgedHazardSignature = '';
   }
 
-  const isAcknowledged = Boolean(state.acknowledgedAlertKey && (state.acknowledgedAlertKey === currentSig));
+  // Reset acknowledgment only after conditions have been fully clear for ALL_CLEAR_HOLD_MS
+  if (hazards.length === 0 && warnings.length === 0) {
+    if (allClearTimestamp === 0) allClearTimestamp = Date.now();
+    if (Date.now() - allClearTimestamp >= ALL_CLEAR_HOLD_MS) {
+      isAlertSilencedByOperator = false;
+      acknowledgedHazardSignature = '';
+      allClearTimestamp = 0;
+    }
+  } else {
+    allClearTimestamp = 0; // reset the clear-hold timer if hazards reappear
+  }
 
   const kpiStatusIconWrap = document.getElementById('kpiStatusIconWrap');
   const kpiStatusIcon = document.getElementById('kpiStatusIcon');
@@ -579,48 +595,49 @@ function evaluateOverallSafety(geofenceResult) {
   const gasSnapshot = `MQ-2: ${Math.round(d.mq2_smoke)} PPM &bull; MQ-7: ${Math.round(d.mq7_co)} PPM &bull; MQ-135: ${Math.round(d.mq135_air)} PPM`;
 
   if (hazards.length > 0) {
-    // CRITICAL DANGER
-    kpiStatusText.textContent = isAcknowledged ? 'DANGER (ACKNOWLEDGED)' : 'DANGER / EMERGENCY';
+    // ── DANGER / EMERGENCY STATE ───────────────────────────────────────────
+    kpiStatusText.textContent = isAlertSilencedByOperator ? 'DANGER (ACKNOWLEDGED)' : 'DANGER / EMERGENCY';
     kpiStatusText.className = 'kpi-value text-danger';
     kpiStatusIconWrap.className = 'kpi-icon-wrap icon-danger';
     kpiStatusIcon.className = 'fa-solid fa-triangle-exclamation';
 
-    kpiGasRiskText.textContent = isAcknowledged ? 'CRITICAL (ACKNOWLEDGED)' : 'CRITICAL RISK';
+    kpiGasRiskText.textContent = isAlertSilencedByOperator ? 'CRITICAL (ACKNOWLEDGED)' : 'CRITICAL RISK';
     kpiGasRiskText.className = 'kpi-value text-danger';
     kpiGasSummary.innerHTML = `<span style="color:#fca5a5;font-weight:600">${hazards[0]}</span><br><span style="opacity:0.85;font-size:0.75rem">${gasSnapshot}</span>`;
 
-    if (isAcknowledged) {
+    if (isAlertSilencedByOperator) {
+      // Operator hit Acknowledge: keep banner hidden and siren silent
       emergencyBanner.classList.add('hidden');
       stopSirenSound();
     } else {
       emergencyBanner.className = 'emergency-alert-banner banner-danger';
       emergencyBanner.classList.remove('hidden');
       emergencyTitle.textContent = `EMERGENCY ALERT: ${state.activeWorker}`;
-      emergencyDetail.textContent = hazards.join(' | ');
+      emergencyDetail.textContent = hazards.join('  •  ');
       triggerAudioAlarm(true);
     }
   } else if (warnings.length > 0) {
-    // WARNING STATE
-    kpiStatusText.textContent = isAcknowledged ? 'WARNING (ACKNOWLEDGED)' : 'WARNING';
+    // ── WARNING STATE ──────────────────────────────────────────────────────
+    kpiStatusText.textContent = isAlertSilencedByOperator ? 'WARNING (ACKNOWLEDGED)' : 'WARNING';
     kpiStatusText.className = 'kpi-value text-warning';
     kpiStatusIconWrap.className = 'kpi-icon-wrap icon-amber';
     kpiStatusIcon.className = 'fa-solid fa-triangle-exclamation';
 
-    kpiGasRiskText.textContent = isAcknowledged ? 'WARNING (ACKNOWLEDGED)' : 'WARNING LEVEL';
+    kpiGasRiskText.textContent = isAlertSilencedByOperator ? 'WARNING (ACKNOWLEDGED)' : 'WARNING LEVEL';
     kpiGasRiskText.className = 'kpi-value text-warning';
     kpiGasSummary.innerHTML = `<span style="color:#fde047;font-weight:600">${warnings[0]}</span><br><span style="opacity:0.85;font-size:0.75rem">${gasSnapshot}</span>`;
 
-    if (isAcknowledged) {
+    if (isAlertSilencedByOperator) {
       emergencyBanner.classList.add('hidden');
     } else {
       emergencyBanner.className = 'emergency-alert-banner banner-warning';
       emergencyBanner.classList.remove('hidden');
       emergencyTitle.textContent = `SAFETY WARNING: ${state.activeWorker}`;
-      emergencyDetail.textContent = warnings.join(' | ');
+      emergencyDetail.textContent = warnings.join('  •  ');
     }
     triggerAudioAlarm(false);
   } else {
-    // SAFE STATE
+    // ── NORMAL / SAFE STATE ────────────────────────────────────────────────
     kpiStatusText.textContent = 'NORMAL / SAFE';
     kpiStatusText.className = 'kpi-value text-safe';
     kpiStatusIconWrap.className = 'kpi-icon-wrap status-safe';
@@ -968,10 +985,14 @@ function setupEventListeners() {
 
   // Dismiss / Acknowledge Emergency Banner
   document.getElementById('dismissAlertBtn').addEventListener('click', () => {
-    state.acknowledgedAlertKey = state.activeHazardsKey;
+    // Capture the EXACT hazard signature computed by evaluateOverallSafety
+    // so the acknowledgment only silences this specific combination of alerts
+    acknowledgedHazardSignature = lastComputedHazardSig;
+    isAlertSilencedByOperator = true;
+    allClearTimestamp = 0;
     document.getElementById('emergencyBanner').classList.add('hidden');
     stopSirenSound();
-    logIncident('info', 'Hazard alert acknowledged by operator. Repeating popups silenced.');
+    logIncident('info', `⚠️ Alert ACKNOWLEDGED. Banner silenced until conditions change.`);
     updateDashboardUI();
   });
 
