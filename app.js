@@ -39,8 +39,8 @@ const state = {
 
   // Threshold Configurations
   thresholds: {
-    tempMax: 42.0,     // °C
-    tempWarning: 38.0,
+    tempMax: 40.0,     // °C — alert threshold (matches ESP32 firmware)
+    tempWarning: 35.0,
     mq7Danger: 50,     // PPM Carbon Monoxide
     mq7Warning: 30,
     mq135Danger: 250,  // PPM Air Quality / Harmful Gases
@@ -60,9 +60,10 @@ let dangerCircle   = null;
 let drawControl    = null;
 let pendingLayer   = null;          // Polygon awaiting name/type input
 let drawnItems     = null;          // L.FeatureGroup for all drawn layers
-let audioContext   = null;
-let sirenOscillator= null;
-let sirenGain      = null;
+let audioContext      = null;
+let sirenOscillator   = null;
+let sirenGain         = null;
+let tempAlertTimeout  = null;  // Tracks temperature alert beep cycle
 let simulatorInterval = null;
 let supabaseClient = null;
 
@@ -502,7 +503,9 @@ function evaluateOverallSafety(geofenceResult) {
     hazards.push(`Flammable Gas Hazard: ${d.mq3_gas.toFixed(2)} mg/L`);
   }
   if (d.temp >= state.thresholds.tempMax) {
-    hazards.push(`Critical High Heat: ${d.temp.toFixed(1)}°C`);
+    hazards.push(`Critical High Heat: ${d.temp.toFixed(1)}\u00b0C`);
+    // Fire distinct temperature alert sound (non-blocking, plays once per trigger)
+    playTemperatureAlertSound();
   }
   if (geofenceResult.status === 'BREACH_RESTRICTED') {
     hazards.push(`Restricted Hazard Chamber Entered!`);
@@ -589,7 +592,47 @@ function evaluateOverallSafety(geofenceResult) {
 }
 
 // ============================================================================
-// Web Audio API Siren / Alarm
+// Temperature-Specific Alert Sound
+// A distinct rising-pitch double-chirp tone so the operator instantly knows
+// the hazard is HEAT — different from the continuous siren for gas/fall.
+// ============================================================================
+function playTemperatureAlertSound() {
+  if (state.sirenMuted) return;
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    if (!audioContext) audioContext = new AudioCtx();
+    if (audioContext.state === 'suspended') audioContext.resume();
+
+    const now = audioContext.currentTime;
+    const gainNode = audioContext.createGain();
+    gainNode.gain.setValueAtTime(0, now);
+    gainNode.connect(audioContext.destination);
+
+    // Two rising-chirp tones — distinctive "heat" pattern
+    [0, 0.35].forEach((startOffset, i) => {
+      const osc = audioContext.createOscillator();
+      osc.type = 'triangle';
+      // Chirp: sweep from 880 Hz → 1760 Hz over 200 ms
+      osc.frequency.setValueAtTime(880, now + startOffset);
+      osc.frequency.linearRampToValueAtTime(1760, now + startOffset + 0.18);
+      osc.connect(gainNode);
+      osc.start(now + startOffset);
+      osc.stop(now + startOffset + 0.20);
+    });
+
+    // Volume envelope: fade in → sustain → fade out
+    gainNode.gain.setValueAtTime(0,    now);
+    gainNode.gain.linearRampToValueAtTime(0.25, now + 0.02);
+    gainNode.gain.setValueAtTime(0.25, now + 0.50);
+    gainNode.gain.linearRampToValueAtTime(0,    now + 0.60);
+  } catch (err) {
+    console.warn('[TempAlert] Audio error:', err);
+  }
+}
+
+// ============================================================================
+// Web Audio API Siren / Alarm  (used for all non-temperature hazards)
 // ============================================================================
 function triggerAudioAlarm(enable) {
   if (state.sirenMuted) {
@@ -788,9 +831,9 @@ function setupEventListeners() {
   });
 
   document.getElementById('simHighTempBtn').addEventListener('click', () => {
-    state.telemetry.temp = 44.5; // Above 42°C danger
+    state.telemetry.temp = 41.0; // Above 40°C danger threshold
     state.telemetry.humidity = 88;
-    logIncident('danger', 'SIMULATION TRIGGER: Mine shaft extreme heat wave (44.5°C)!');
+    logIncident('danger', 'SIMULATION TRIGGER: Mine shaft extreme heat wave (41.0°C)! Temperature exceeds 40°C safety limit.');
     alertStats.suddenMovement++;
     updateAlertFrequenciesChart();
     updateDashboardUI();
@@ -992,7 +1035,18 @@ function initSupabaseConnection(url, key) {
 }
 
 function receiveHardwareTelemetry(row) {
-  if (row.temperature !== undefined) state.telemetry.temp = parseFloat(row.temperature);
+  if (row.temperature !== undefined) {
+    const newTemp = parseFloat(row.temperature);
+    // Log a specific heat alert when temperature crosses the danger threshold
+    if (newTemp >= state.thresholds.tempMax && state.telemetry.temp < state.thresholds.tempMax) {
+      logIncident('danger',
+        `\uD83D\uDD25 HEAT ALERT: Temperature rose to ${newTemp.toFixed(1)}\u00b0C — exceeds ${state.thresholds.tempMax}\u00b0C safety limit! Evacuate worker immediately.`);
+      playTemperatureAlertSound();
+    } else if (newTemp < state.thresholds.tempMax && state.telemetry.temp >= state.thresholds.tempMax) {
+      logIncident('safe', `Temperature dropped to ${newTemp.toFixed(1)}\u00b0C — back within safe range.`);
+    }
+    state.telemetry.temp = newTemp;
+  }
   if (row.humidity !== undefined) state.telemetry.humidity = parseFloat(row.humidity);
   if (row.mq7_co !== undefined) state.telemetry.mq7_co = parseFloat(row.mq7_co);
   if (row.mq135_air !== undefined) state.telemetry.mq135_air = parseFloat(row.mq135_air);

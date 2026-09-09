@@ -67,7 +67,7 @@ const char* WORKER_ID     = "W-101";
 // ==========================================
 // 4. THRESHOLDS & GEOFENCE SPECS
 // ==========================================
-const float TEMP_DANGER_CELSIUS       = 42.0;
+const float TEMP_DANGER_CELSIUS       = 40.0;  // Alert threshold lowered to 40°C
 const int   MQ7_DANGER_PPM            = 50;
 const int   MQ135_DANGER_PPM          = 250;
 const float MQ3_DANGER_MGL            = 0.40;
@@ -90,6 +90,8 @@ unsigned long lastTelemetryUpload    = 0;
 const unsigned long UPLOAD_INTERVAL_MS = 3000;
 
 unsigned long lastMotionDetectedTime = 0;
+unsigned long lastBuzzerPatternTime  = 0;  // Timer for temperature buzzer pattern
+bool          tempAlertActive        = false;  // True while temp >= TEMP_DANGER_CELSIUS
 unsigned long lastGpsLogTime         = 0;
 
 bool isFallTriggered    = false;
@@ -113,6 +115,7 @@ double calculateDistanceMeters(double lat1, double lon1, double lat2, double lon
 // 7. FUNCTION DECLARATIONS
 // ==========================================
 void connectWiFi();
+void runTemperatureBuzzerPattern();  // Rapid double-beep for heat alerts
 void sendTelemetryToSupabase(
   float temp, float humid, float mq7, float mq135, float mq3,
   double lat, double lng, float accel, bool fall, int inactivitySecs,
@@ -249,31 +252,84 @@ void loop() {
   isGeofenceBreached  = gpsFixed && (distFromBase > SAFE_RADIUS_METERS);
 
   // Overall Danger Assessment
-  bool isCritical = (mq7CoPPM    >= MQ7_DANGER_PPM)    ||
-                    (mq135AirPPM >= MQ135_DANGER_PPM)   ||
-                    (mq3GasPPM   >= MQ3_DANGER_MGL)     ||
-                    (temperature >= TEMP_DANGER_CELSIUS) ||
-                    isFallTriggered || isInactiveAlarm   ||
-                    isGeofenceBreached;
+  bool isTempDanger  = (temperature >= TEMP_DANGER_CELSIUS);
+  bool isCritical    = (mq7CoPPM    >= MQ7_DANGER_PPM)    ||
+                       (mq135AirPPM >= MQ135_DANGER_PPM)   ||
+                       (mq3GasPPM   >= MQ3_DANGER_MGL)     ||
+                       isTempDanger || isFallTriggered      ||
+                       isInactiveAlarm || isGeofenceBreached;
 
-  // Local Buzzer + LED Alert
-  digitalWrite(PIN_BUZZER, isCritical ? HIGH : LOW);
-  digitalWrite(PIN_LED,    isCritical ? HIGH : LOW);
+  // ── Temperature-specific buzzer pattern (rapid double-beep every 1.5 s) ──
+  // This gives workers a distinct audible cue that the hazard is HEAT,
+  // rather than the continuous tone used for gas / fall / geofence alerts.
+  if (isTempDanger) {
+    if (!tempAlertActive) {
+      tempAlertActive = true;
+      Serial.printf("[TEMP ALERT] Temperature %.1f C exceeds %.1f C threshold!\n",
+                    temperature, TEMP_DANGER_CELSIUS);
+    }
+    runTemperatureBuzzerPattern();   // Non-blocking pattern generator
+  } else {
+    tempAlertActive = false;
+    // Only drive buzzer/LED with continuous ON if other hazards are active
+    if (isCritical) {
+      digitalWrite(PIN_BUZZER, HIGH);
+      digitalWrite(PIN_LED,    HIGH);
+    } else {
+      digitalWrite(PIN_BUZZER, LOW);
+      digitalWrite(PIN_LED,    LOW);
+    }
+  }
+
+  // LED always mirrors overall critical state
+  if (isTempDanger) {
+    digitalWrite(PIN_LED, HIGH);   // Keep LED solid ON during heat alert
+  }
 
   // Supabase Telemetry Upload (every 3 seconds)
   if (millis() - lastTelemetryUpload >= UPLOAD_INTERVAL_MS) {
     lastTelemetryUpload = millis();
+    // Determine alert string
+    const char* alertStatus = isCritical ? "DANGER" : "SAFE";
     sendTelemetryToSupabase(
       temperature, humidity, mq7CoPPM, mq135AirPPM, mq3GasPPM,
       currentLat, currentLng, totalAccelG,
       isFallTriggered, (int)(inactivityDuration / 1000),
       gpsSats, gpsHDOP, gpsFixed,
-      isCritical ? "DANGER" : "SAFE"
+      alertStatus
     );
     isFallTriggered = false;  // Reset one-shot fall flag after reporting
   }
 
   delay(50);
+}
+
+// ==========================================
+// 9b. TEMPERATURE BUZZER PATTERN
+//     Rapid double-beep: beep-beep ... pause ... repeat
+//     Pattern: ON 120ms | OFF 100ms | ON 120ms | OFF 1160ms
+//     Total cycle: ~1500 ms (1.5 seconds per double-beep)
+//     Runs non-blocking using millis().
+// ==========================================
+void runTemperatureBuzzerPattern() {
+  // Phase timing within the 1500 ms cycle (ms from cycle start)
+  const unsigned long BEEP1_ON  = 0;
+  const unsigned long BEEP1_OFF = 120;
+  const unsigned long BEEP2_ON  = 220;
+  const unsigned long BEEP2_OFF = 340;
+  const unsigned long CYCLE_MS  = 1500;
+
+  unsigned long phase = (millis() - lastBuzzerPatternTime) % CYCLE_MS;
+
+  if (phase < BEEP1_OFF) {
+    digitalWrite(PIN_BUZZER, HIGH);   // First beep ON
+  } else if (phase < BEEP2_ON) {
+    digitalWrite(PIN_BUZZER, LOW);    // Gap between beeps
+  } else if (phase < BEEP2_OFF) {
+    digitalWrite(PIN_BUZZER, HIGH);   // Second beep ON
+  } else {
+    digitalWrite(PIN_BUZZER, LOW);    // Silence until next cycle
+  }
 }
 
 // ==========================================
