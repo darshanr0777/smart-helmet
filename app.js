@@ -43,16 +43,14 @@ const state = {
 
   // Threshold Configurations (match ESP32 firmware values)
   thresholds: {
-    tempMax: 40.0,      // °C
+    tempMax: 40.0,        // °C
     tempWarning: 35.0,
-    mq2Danger: 400,     // PPM — MQ-2 Smoke / LPG danger
-    mq2Warning: 200,
-    mq7Danger: 50,      // PPM — MQ-7 CO (OSHA PEL)
-    mq7Warning: 30,
-    mq135Danger: 250,   // PPM — MQ-135 toxic air
-    mq135Warning: 150,
-    mq3Danger: 0.40,    // mg/L — MQ-3 legacy
-    mq3Warning: 0.20,
+    mq2Danger: 10000,     // PPM — MQ-2 Smoke / LPG Danger (>= 10000 PPM)
+    mq2Warning: 5000,     // PPM — MQ-2 Smoke / LPG Warning (>= 5000 PPM)
+    mq7Danger: 50,        // PPM — MQ-7 Carbon Monoxide Danger (50–100 PPM)
+    mq7Warning: 35,       // PPM — MQ-7 Carbon Monoxide Warning (>= 35 PPM)
+    mq135Danger: 50,      // PPM — MQ-135 Toxic Gas Danger (>= 50 PPM)
+    mq135Warning: 25,     // PPM — MQ-135 Air Quality Warning (>= 25 PPM)
     inactivityTimeout: 60, // seconds
     fallThresholdG: 2.80   // G-Force
   }
@@ -384,6 +382,7 @@ function updateDashboardUI() {
   }
 
   // 2. Gas Array: MQ-7 (Carbon Monoxide)
+  // 2. Gas Array: MQ-7 (Carbon Monoxide — Warning >=35 PPM, Danger 50–100 PPM)
   document.getElementById('mq7Val').textContent = Math.round(d.mq7_co);
   const mq7Progress = document.getElementById('mq7Progress');
   const mq7Badge = document.getElementById('mq7Badge');
@@ -391,57 +390,57 @@ function updateDashboardUI() {
   mq7Progress.style.width = mq7Percent + '%';
 
   if (d.mq7_co >= state.thresholds.mq7Danger) {
-    mq7Badge.textContent = 'LETHAL CO LEVEL';
+    mq7Badge.textContent = 'DANGER (>=50 PPM)';
     mq7Badge.className = 'badge badge-danger';
     mq7Progress.className = 'progress-fill fill-danger';
   } else if (d.mq7_co >= state.thresholds.mq7Warning) {
-    mq7Badge.textContent = 'Elevated CO';
+    mq7Badge.textContent = 'WARNING (>=35 PPM)';
     mq7Badge.className = 'badge badge-warning';
     mq7Progress.className = 'progress-fill fill-warning';
   } else {
-    mq7Badge.textContent = 'Safe';
+    mq7Badge.textContent = 'Safe (<35 PPM)';
     mq7Badge.className = 'badge badge-safe';
     mq7Progress.className = 'progress-fill fill-safe';
   }
 
-  // 3. Gas Array: MQ-135 (Toxic gases: NH3, Smoke, Benzene)
+  // 3. Gas Array: MQ-135 (Air Quality / Toxic Gas — Warning >=25 PPM, Danger >=50 PPM)
   document.getElementById('mq135Val').textContent = Math.round(d.mq135_air);
   const mq135Progress = document.getElementById('mq135Progress');
   const mq135Badge = document.getElementById('mq135Badge');
-  const mq135Percent = Math.min(100, (d.mq135_air / 400) * 100);
+  const mq135Percent = Math.min(100, (d.mq135_air / 100) * 100);
   mq135Progress.style.width = mq135Percent + '%';
 
   if (d.mq135_air >= state.thresholds.mq135Danger) {
-    mq135Badge.textContent = 'HAZARDOUS AIR';
+    mq135Badge.textContent = 'DANGER (>=50 PPM)';
     mq135Badge.className = 'badge badge-danger';
     mq135Progress.className = 'progress-fill fill-danger';
   } else if (d.mq135_air >= state.thresholds.mq135Warning) {
-    mq135Badge.textContent = 'Moderate Quality';
+    mq135Badge.textContent = 'WARNING (>=25 PPM)';
     mq135Badge.className = 'badge badge-warning';
     mq135Progress.className = 'progress-fill fill-warning';
   } else {
-    mq135Badge.textContent = 'Good Quality';
+    mq135Badge.textContent = 'Good Quality (<25 PPM)';
     mq135Badge.className = 'badge badge-safe';
     mq135Progress.className = 'progress-fill fill-safe';
   }
 
-  // 4. Gas Array: MQ-2 (Smoke / LPG / Flammable Gas — PPM)
+  // 4. Gas Array: MQ-2 (Smoke / LPG / Flammable Gas — Warning >=5000 PPM, Danger >=10000 PPM)
   document.getElementById('mq3Val').textContent = Math.round(d.mq2_smoke);
   const mq3Progress = document.getElementById('mq3Progress');
   const mq3Badge = document.getElementById('mq3Badge');
-  const mq3Percent = Math.min(100, (d.mq2_smoke / 800) * 100);  // 800 PPM = full scale
+  const mq3Percent = Math.min(100, (d.mq2_smoke / 12000) * 100);  // 12,000 PPM scale
   mq3Progress.style.width = mq3Percent + '%';
 
   if (d.mq2_smoke >= state.thresholds.mq2Danger) {
-    mq3Badge.textContent = 'SMOKE / FIRE RISK!';
+    mq3Badge.textContent = 'DANGER (>=10000 PPM)';
     mq3Badge.className = 'badge badge-danger';
     mq3Progress.className = 'progress-fill fill-danger';
   } else if (d.mq2_smoke >= state.thresholds.mq2Warning) {
-    mq3Badge.textContent = 'Smoke Detected';
+    mq3Badge.textContent = 'WARNING (>=5000 PPM)';
     mq3Badge.className = 'badge badge-warning';
     mq3Progress.className = 'progress-fill fill-warning';
   } else {
-    mq3Badge.textContent = 'Safe';
+    mq3Badge.textContent = 'Safe (<5000 PPM)';
     mq3Badge.className = 'badge badge-safe';
     mq3Progress.className = 'progress-fill fill-safe';
   }
@@ -508,24 +507,37 @@ function updateDashboardUI() {
 function evaluateOverallSafety(geofenceResult) {
   const d = state.telemetry;
   let hazards = [];
+  let warnings = [];
 
+  // MQ-7: Carbon Monoxide (Warning >= 35 PPM, Danger 50–100 PPM)
   if (d.mq7_co >= state.thresholds.mq7Danger) {
-    hazards.push(`Lethal Carbon Monoxide: ${Math.round(d.mq7_co)} PPM`);
+    hazards.push(`☠️ MQ-7 DANGER: Lethal Carbon Monoxide (${Math.round(d.mq7_co)} PPM >= 50 PPM)`);
+  } else if (d.mq7_co >= state.thresholds.mq7Warning) {
+    warnings.push(`⚠️ MQ-7 Warning: Elevated Carbon Monoxide (${Math.round(d.mq7_co)} PPM >= 35 PPM)`);
   }
+
+  // MQ-135: Air Quality / Toxic Gas (Warning >= 25 PPM, Danger >= 50 PPM)
   if (d.mq135_air >= state.thresholds.mq135Danger) {
-    hazards.push(`Toxic Gas Breach: ${Math.round(d.mq135_air)} PPM`);
+    hazards.push(`☣️ MQ-135 DANGER: Toxic Gas Breach (${Math.round(d.mq135_air)} PPM >= 50 PPM)`);
+  } else if (d.mq135_air >= state.thresholds.mq135Warning) {
+    warnings.push(`⚠️ MQ-135 Warning: Poor Air Quality (${Math.round(d.mq135_air)} PPM >= 25 PPM)`);
   }
-  // MQ-2: Smoke / LPG / Flammable Gas
+
+  // MQ-2: Smoke / LPG / Flammable Gas (Warning >= 5000 PPM, Danger >= 10000 PPM)
   if (d.mq2_smoke >= state.thresholds.mq2Danger) {
-    hazards.push(`🔥 Smoke / Flammable Gas: ${Math.round(d.mq2_smoke)} PPM (MQ-2)`);
+    hazards.push(`🔥 MQ-2 DANGER: Explosive Smoke / Flammable Gas (${Math.round(d.mq2_smoke)} PPM >= 10000 PPM)`);
   } else if (d.mq2_smoke >= state.thresholds.mq2Warning) {
-    hazards.push(`Smoke Traces Detected: ${Math.round(d.mq2_smoke)} PPM (MQ-2)`);
+    warnings.push(`⚠️ MQ-2 Warning: Smoke / Gas Traces (${Math.round(d.mq2_smoke)} PPM >= 5000 PPM)`);
   }
+
+  // DHT11 Temperature
   if (d.temp >= state.thresholds.tempMax) {
-    hazards.push(`Critical High Heat: ${d.temp.toFixed(1)}\u00b0C`);
-    // Fire distinct temperature alert sound (non-blocking, plays once per trigger)
+    hazards.push(`Critical High Heat: ${d.temp.toFixed(1)}°C (>= 40°C)`);
     playTemperatureAlertSound();
+  } else if (d.temp >= state.thresholds.tempWarning) {
+    warnings.push(`Elevated Heat Warning: ${d.temp.toFixed(1)}°C (>= 35°C)`);
   }
+
   if (geofenceResult.status === 'BREACH_RESTRICTED') {
     hazards.push(`Restricted Hazard Chamber Entered!`);
   } else if (geofenceResult.status === 'OUT_OF_BOUNDS') {
@@ -538,7 +550,6 @@ function evaluateOverallSafety(geofenceResult) {
     hazards.push(`Unresponsive Worker: No movement for >60s`);
   }
 
-  const kpiOverallCard = document.getElementById('kpiOverallCard');
   const kpiStatusIconWrap = document.getElementById('kpiStatusIconWrap');
   const kpiStatusIcon = document.getElementById('kpiStatusIcon');
   const kpiStatusText = document.getElementById('kpiStatusText');
@@ -547,6 +558,8 @@ function evaluateOverallSafety(geofenceResult) {
   const emergencyBanner = document.getElementById('emergencyBanner');
   const emergencyTitle = document.getElementById('emergencyTitle');
   const emergencyDetail = document.getElementById('emergencyDetail');
+
+  const gasSnapshot = `MQ-2: ${Math.round(d.mq2_smoke)} PPM &bull; MQ-7: ${Math.round(d.mq7_co)} PPM &bull; MQ-135: ${Math.round(d.mq135_air)} PPM`;
 
   if (hazards.length > 0) {
     // CRITICAL DANGER
@@ -557,7 +570,7 @@ function evaluateOverallSafety(geofenceResult) {
 
     kpiGasRiskText.textContent = 'CRITICAL RISK';
     kpiGasRiskText.className = 'kpi-value text-danger';
-    kpiGasSummary.innerHTML = `<span style="color:#fca5a5;font-weight:600">${hazards[0]}</span><br><span style="opacity:0.85;font-size:0.75rem">MQ-2: ${Math.round(d.mq2_smoke)} PPM &bull; MQ-7: ${Math.round(d.mq7_co)} PPM &bull; MQ-135: ${Math.round(d.mq135_air)} PPM</span>`;
+    kpiGasSummary.innerHTML = `<span style="color:#fca5a5;font-weight:600">${hazards[0]}</span><br><span style="opacity:0.85;font-size:0.75rem">${gasSnapshot}</span>`;
 
     // Show Emergency Banner
     emergencyBanner.classList.remove('hidden');
@@ -565,6 +578,23 @@ function evaluateOverallSafety(geofenceResult) {
     emergencyDetail.textContent = hazards.join(' | ');
 
     triggerAudioAlarm(true);
+  } else if (warnings.length > 0) {
+    // WARNING STATE
+    kpiStatusText.textContent = 'WARNING';
+    kpiStatusText.className = 'kpi-value text-warning';
+    kpiStatusIconWrap.className = 'kpi-icon-wrap icon-amber';
+    kpiStatusIcon.className = 'fa-solid fa-triangle-exclamation';
+
+    kpiGasRiskText.textContent = 'WARNING LEVEL';
+    kpiGasRiskText.className = 'kpi-value text-warning';
+    kpiGasSummary.innerHTML = `<span style="color:#fde047;font-weight:600">${warnings[0]}</span><br><span style="opacity:0.85;font-size:0.75rem">${gasSnapshot}</span>`;
+
+    // Show Warning Banner
+    emergencyBanner.classList.remove('hidden');
+    emergencyTitle.textContent = `SAFETY WARNING: ${state.activeWorker}`;
+    emergencyDetail.textContent = warnings.join(' | ');
+
+    triggerAudioAlarm(false);
   } else {
     // SAFE STATE
     kpiStatusText.textContent = 'NORMAL / SAFE';

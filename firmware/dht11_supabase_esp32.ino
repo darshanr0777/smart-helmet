@@ -128,9 +128,9 @@ const char* WORKER_ID = "W-101";
 //    voltage = rawADC * (3.3 / 4095.0)       // 0 – 3.3 V
 //    ppm     = voltage * SCALE_FACTOR
 // ─────────────────────────────────────────────────────────────
-const float MQ2_SCALE    = 200.0;   // 3.3V full-scale ≈ 660 PPM  (smoke/LPG/CO mix)
-const float MQ7_SCALE    =  30.0;   // 3.3V full-scale ≈  99 PPM  (CO)
-const float MQ135_SCALE  = 120.0;   // 3.3V full-scale ≈ 396 PPM  (air quality)
+const float MQ2_SCALE    = 3030.0;  // 3.3V full-scale ≈ 10,000 PPM (smoke / LPG / flammable gas)
+const float MQ7_SCALE    =   30.0;  // 3.3V full-scale ≈ 100 PPM    (CO)
+const float MQ135_SCALE  =   30.0;  // 3.3V full-scale ≈ 100 PPM    (air quality / toxic gas)
 
 // ─────────────────────────────────────────────────────────────
 //  6. SAFETY THRESHOLDS
@@ -140,17 +140,17 @@ const float TEMP_DANGER_C    = 40.0;   // °C
 const float TEMP_WARNING_C   = 35.0;   // °C
 const float HUMID_DANGER     = 90.0;   // %RH
 
-// MQ-2  (Smoke / LPG / CO composite)
-const float MQ2_DANGER_PPM   = 400.0;
-const float MQ2_WARNING_PPM  = 200.0;
+// MQ-2  (Smoke / LPG / Flammable Gas: Warning >= 5000 PPM, Danger >= 10000 PPM)
+const float MQ2_DANGER_PPM   = 10000.0;
+const float MQ2_WARNING_PPM  =  5000.0;
 
-// MQ-7  (Carbon Monoxide — IDLH = 1200 PPM, OSHA PEL = 50 PPM)
-const float MQ7_DANGER_PPM   =  50.0;
-const float MQ7_WARNING_PPM  =  30.0;
+// MQ-7  (Carbon Monoxide: Warning >= 35 PPM, Danger >= 50 PPM)
+const float MQ7_DANGER_PPM   =    50.0;
+const float MQ7_WARNING_PPM  =    35.0;
 
-// MQ-135 (Toxic / poor air quality)
-const float MQ135_DANGER_PPM  = 250.0;
-const float MQ135_WARNING_PPM = 150.0;
+// MQ-135 (Air Quality / Toxic Gas: Warning >= 25 PPM, Danger >= 50 PPM)
+const float MQ135_DANGER_PPM  =   50.0;
+const float MQ135_WARNING_PPM =   25.0;
 
 // ─────────────────────────────────────────────────────────────
 //  7. TIMING
