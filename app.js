@@ -521,10 +521,6 @@ function evaluateOverallSafety(geofenceResult) {
   } else if (d.mq2_smoke >= state.thresholds.mq2Warning) {
     hazards.push(`Smoke Traces Detected: ${Math.round(d.mq2_smoke)} PPM (MQ-2)`);
   }
-  // MQ-3 legacy check (for smart_helmet_esp32.ino with physical MQ-3 sensor)
-  if (d.mq3_gas >= state.thresholds.mq3Danger) {
-    hazards.push(`Flammable Gas Hazard: ${d.mq3_gas.toFixed(2)} mg/L (MQ-3)`);
-  }
   if (d.temp >= state.thresholds.tempMax) {
     hazards.push(`Critical High Heat: ${d.temp.toFixed(1)}\u00b0C`);
     // Fire distinct temperature alert sound (non-blocking, plays once per trigger)
