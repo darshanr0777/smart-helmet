@@ -14,6 +14,8 @@ const state = {
   isDeviceOnline: true,
   lastTelemetryTimestamp: Date.now(),
   lastTelemetryId: 0,
+  activeHazardsKey: null,
+  acknowledgedAlertKey: null,
   
   // Geofencing Center & Mine Boundaries (Latitude, Longitude, Radius in meters)
   mineSiteCenter: { lat: 12.971598, lng: 77.594566 },
@@ -550,6 +552,21 @@ function evaluateOverallSafety(geofenceResult) {
     hazards.push(`Unresponsive Worker: No movement for >60s`);
   }
 
+  // Generate normalized signatures of active conditions (strips numerical fluctuations so acknowledgment sticks)
+  const normalize = (arr) => arr.map(msg => msg.replace(/[0-9.]+\s*(PPM|°C|%|G)/gi, '').trim()).sort().join('|');
+  const hazardSig = hazards.length > 0 ? normalize(hazards) : '';
+  const warningSig = warnings.length > 0 ? normalize(warnings) : '';
+  const currentSig = hazardSig || warningSig;
+
+  state.activeHazardsKey = currentSig;
+
+  // If hazards and warnings have completely cleared, reset acknowledgment so new future hazards alert freshly
+  if (!currentSig) {
+    state.acknowledgedAlertKey = null;
+  }
+
+  const isAcknowledged = Boolean(state.acknowledgedAlertKey && (state.acknowledgedAlertKey === currentSig));
+
   const kpiStatusIconWrap = document.getElementById('kpiStatusIconWrap');
   const kpiStatusIcon = document.getElementById('kpiStatusIcon');
   const kpiStatusText = document.getElementById('kpiStatusText');
@@ -563,37 +580,44 @@ function evaluateOverallSafety(geofenceResult) {
 
   if (hazards.length > 0) {
     // CRITICAL DANGER
-    kpiStatusText.textContent = 'DANGER / EMERGENCY';
+    kpiStatusText.textContent = isAcknowledged ? 'DANGER (ACKNOWLEDGED)' : 'DANGER / EMERGENCY';
     kpiStatusText.className = 'kpi-value text-danger';
     kpiStatusIconWrap.className = 'kpi-icon-wrap icon-danger';
     kpiStatusIcon.className = 'fa-solid fa-triangle-exclamation';
 
-    kpiGasRiskText.textContent = 'CRITICAL RISK';
+    kpiGasRiskText.textContent = isAcknowledged ? 'CRITICAL (ACKNOWLEDGED)' : 'CRITICAL RISK';
     kpiGasRiskText.className = 'kpi-value text-danger';
     kpiGasSummary.innerHTML = `<span style="color:#fca5a5;font-weight:600">${hazards[0]}</span><br><span style="opacity:0.85;font-size:0.75rem">${gasSnapshot}</span>`;
 
-    // Show Emergency Banner
-    emergencyBanner.classList.remove('hidden');
-    emergencyTitle.textContent = `EMERGENCY ALERT: ${state.activeWorker}`;
-    emergencyDetail.textContent = hazards.join(' | ');
-
-    triggerAudioAlarm(true);
+    if (isAcknowledged) {
+      emergencyBanner.classList.add('hidden');
+      stopSirenSound();
+    } else {
+      emergencyBanner.className = 'emergency-alert-banner banner-danger';
+      emergencyBanner.classList.remove('hidden');
+      emergencyTitle.textContent = `EMERGENCY ALERT: ${state.activeWorker}`;
+      emergencyDetail.textContent = hazards.join(' | ');
+      triggerAudioAlarm(true);
+    }
   } else if (warnings.length > 0) {
     // WARNING STATE
-    kpiStatusText.textContent = 'WARNING';
+    kpiStatusText.textContent = isAcknowledged ? 'WARNING (ACKNOWLEDGED)' : 'WARNING';
     kpiStatusText.className = 'kpi-value text-warning';
     kpiStatusIconWrap.className = 'kpi-icon-wrap icon-amber';
     kpiStatusIcon.className = 'fa-solid fa-triangle-exclamation';
 
-    kpiGasRiskText.textContent = 'WARNING LEVEL';
+    kpiGasRiskText.textContent = isAcknowledged ? 'WARNING (ACKNOWLEDGED)' : 'WARNING LEVEL';
     kpiGasRiskText.className = 'kpi-value text-warning';
     kpiGasSummary.innerHTML = `<span style="color:#fde047;font-weight:600">${warnings[0]}</span><br><span style="opacity:0.85;font-size:0.75rem">${gasSnapshot}</span>`;
 
-    // Show Warning Banner
-    emergencyBanner.classList.remove('hidden');
-    emergencyTitle.textContent = `SAFETY WARNING: ${state.activeWorker}`;
-    emergencyDetail.textContent = warnings.join(' | ');
-
+    if (isAcknowledged) {
+      emergencyBanner.classList.add('hidden');
+    } else {
+      emergencyBanner.className = 'emergency-alert-banner banner-warning';
+      emergencyBanner.classList.remove('hidden');
+      emergencyTitle.textContent = `SAFETY WARNING: ${state.activeWorker}`;
+      emergencyDetail.textContent = warnings.join(' | ');
+    }
     triggerAudioAlarm(false);
   } else {
     // SAFE STATE
@@ -942,11 +966,13 @@ function setupEventListeners() {
     }
   });
 
-  // Dismiss Emergency Banner
+  // Dismiss / Acknowledge Emergency Banner
   document.getElementById('dismissAlertBtn').addEventListener('click', () => {
+    state.acknowledgedAlertKey = state.activeHazardsKey;
     document.getElementById('emergencyBanner').classList.add('hidden');
     stopSirenSound();
-    logIncident('info', 'Hazard alert acknowledged by operator.');
+    logIncident('info', 'Hazard alert acknowledged by operator. Repeating popups silenced.');
+    updateDashboardUI();
   });
 
   // Clear Logs
