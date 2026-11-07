@@ -1255,6 +1255,8 @@ function receiveHardwareTelemetry(row) {
 
   if (row.latitude != null && !isNaN(parseFloat(row.latitude))) state.telemetry.lat = parseFloat(row.latitude);
   if (row.longitude != null && !isNaN(parseFloat(row.longitude))) state.telemetry.lng = parseFloat(row.longitude);
+  if (row.gps_satellites != null && !isNaN(parseInt(row.gps_satellites))) state.telemetry.satellites = parseInt(row.gps_satellites);
+  if (row.gps_fix != null) state.telemetry.gpsFix = Boolean(row.gps_fix);
   if (row.accel_total != null && !isNaN(parseFloat(row.accel_total))) state.telemetry.accelTotal = parseFloat(row.accel_total);
   if (row.is_fall != null) state.isFallDetected = Boolean(row.is_fall);
   if (row.inactivity_secs != null && !isNaN(parseInt(row.inactivity_secs))) state.inactivitySeconds = parseInt(row.inactivity_secs);
