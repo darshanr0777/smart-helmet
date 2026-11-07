@@ -153,8 +153,10 @@ ALTER TABLE public.helmet_telemetry REPLICA IDENTITY FULL;
 -- (Safe to run even on a fresh table — ADD COLUMN IF NOT EXISTS is idempotent)
 -- ============================================================================
 
--- Migration 5a: Add GPS quality columns (added in v1.1)
+-- Migration 5a: Add GPS coordinates & quality columns (safe to run on existing tables)
 ALTER TABLE public.helmet_telemetry
+    ADD COLUMN IF NOT EXISTS latitude       DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS longitude      DOUBLE PRECISION,
     ADD COLUMN IF NOT EXISTS gps_fix        BOOLEAN      DEFAULT FALSE,
     ADD COLUMN IF NOT EXISTS gps_satellites INTEGER      DEFAULT 0,
     ADD COLUMN IF NOT EXISTS gps_hdop       NUMERIC(4,1) DEFAULT 99.9;

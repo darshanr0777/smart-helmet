@@ -1,9 +1,9 @@
 /*
  * ============================================================
  *  Project : IOT BASED SMART SAFETY HELMET FOR MINE WORKERS
- *  Module  : DHT11 + MQ-2 + MQ-7 + MQ-135 → ESP32 → Supabase
+ *  Module  : DHT11 + MQ-2 + MQ-7 + MQ-135 + GPS NEO-6M → ESP32 → Supabase
  *  Board   : ESP32 Dev Module (any variant)
- *  Version : 3.0  (Added MQ-2, MQ-7, MQ-135 gas sensors)
+ *  Version : 4.0  (Added GPS Neo-6M Geolocation & Geofencing)
  * ============================================================
  *
  *  ╔══════════════════════════════════════════════════════════╗
@@ -27,44 +27,36 @@
  *  ║  MQ-135 VCC                        →  5V (VIN)          ║
  *  ║  MQ-135 GND                        →  GND               ║
  *  ║                                                         ║
+ *  ║  GPS NEO-6M TX         TX          →  GPIO 16 (UART2 RX)║
+ *  ║  GPS NEO-6M RX         RX          →  GPIO 17 (UART2 TX)║
+ *  ║  GPS NEO-6M VCC                    →  3V3 or 5V (VIN)   ║
+ *  ║  GPS NEO-6M GND                    →  GND               ║
+ *  ║                                                         ║
  *  ║  Buzzer (+)            Signal      →  GPIO 25           ║
  *  ║  Buzzer (-)                        →  GND               ║
  *  ║  LED    (+)  220Ω res  Anode       →  GPIO 26           ║
  *  ║  LED    (-)            Cathode     →  GND               ║
  *  ╠══════════════════════════════════════════════════════════╣
- *  ║  IMPORTANT:                                             ║
- *  ║  • MQ sensors need 5V for heater — use VIN not 3V3!    ║
- *  ║  • ESP32 ADC pins are 3.3V MAX. MQ AO output ≈ 0–3.3V  ║
- *  ║    which is safe to connect directly to ESP32 ADC.     ║
- *  ║  • GPIO 34, 35 are INPUT-ONLY (no internal pull-up).   ║
- *  ║  • Pre-heat MQ sensors for 24–48 hrs before use for    ║
- *  ║    accurate readings. First-time burn-in is normal.    ║
- *  ║  • Digital (DO) pin of MQ boards is NOT used here;     ║
- *  ║    we use the Analog (AO) pin for finer resolution.    ║
+ *  ║  IMPORTANT GPS NOTES:                                   ║
+ *  ║  • GPS TX goes to ESP32 RX (GPIO 16). Cross-connect!    ║
+ *  ║  • GPS RX goes to ESP32 TX (GPIO 17).                   ║
+ *  ║  • GPS needs an open sky view for satellite lock        ║
+ *  ║    (takes 30-120 seconds outdoors).                     ║
+ *  ║  • While waiting for lock, fallback mine coordinates    ║
+ *  ║    are sent so the dashboard map stays centered!        ║
  *  ╚══════════════════════════════════════════════════════════╝
  *
- *  REQUIRED LIBRARIES  (Arduino IDE → Library Manager)
+ *  REQUIRED LIBRARIES (Arduino IDE → Library Manager):
  *  ─────────────────────────────────────────────────────────
- *  1. "DHT sensor library"  by Adafruit  + its dependencies
- *  2. WiFi / HTTPClient / WiFiClientSecure — built-in with
- *     ESP32 Arduino board package (no extra install)
+ *  1. "DHT sensor library" by Adafruit
+ *  2. "TinyGPSPlus" by Mikal Hart
+ *  3. WiFi / HTTPClient / WiFiClientSecure (built into ESP32 core)
  *
- *  BOARD SETUP  (Arduino IDE)
+ *  BOARD SETUP (Arduino IDE):
  *  ─────────────────────────────────────────────────────────
  *  Tools → Board     :  ESP32 Dev Module
  *  Tools → Port      :  (your COM port)
  *  Baud Rate Monitor :  115200
- *
- *  SENSOR ALERTS SUMMARY
- *  ─────────────────────────────────────────────────────────
- *  Sensor   Measures          WARNING threshold  DANGER threshold
- *  ───────  ────────────────  ─────────────────  ────────────────
- *  DHT11    Temperature       35 °C              40 °C
- *  DHT11    Humidity          —                  90 %RH
- *  MQ-2     Smoke / LPG / CO  200 PPM            400 PPM
- *  MQ-7     Carbon Monoxide   30 PPM             50 PPM  (IDLH)
- *  MQ-135   Air Quality (AQI) 150 PPM            250 PPM
- *
  * ============================================================
  */
 
@@ -74,20 +66,17 @@
 #include <WiFi.h>               // ESP32 WiFi stack
 #include <HTTPClient.h>         // HTTP client
 #include <WiFiClientSecure.h>   // HTTPS / TLS
-#include <DHT.h>                // Adafruit DHT11/22 library
+#include <DHT.h>                // Adafruit DHT11 library
+#include <TinyGPSPlus.h>        // TinyGPSPlus library for NEO-6M
 
 // ─────────────────────────────────────────────────────────────
-//  1. WiFi CREDENTIALS  ← EDIT THESE
+//  1. WiFi CREDENTIALS
 // ─────────────────────────────────────────────────────────────
 const char* WIFI_SSID     = "darshan";    // Hotspot / router SSID
 const char* WIFI_PASSWORD = "12345678";   // Hotspot / router password
 
 // ─────────────────────────────────────────────────────────────
-//  2. SUPABASE CONFIGURATION  ← EDIT THESE
-//
-//  Supabase Dashboard → Project → Settings → API
-//    "Project URL"           → paste below (without trailing /)
-//    "anon / public" key     → paste below
+//  2. SUPABASE CONFIGURATION
 // ─────────────────────────────────────────────────────────────
 const char* SUPABASE_URL = "https://srkowkuclkimtwhkiutg.supabase.co/rest/v1/helmet_telemetry";
 const char* SUPABASE_KEY = "sb_publishable_kWHQSFzZEblEqWzlTwZuvg_ISGBBUCu";
@@ -105,42 +94,41 @@ const char* WORKER_ID = "W-101";
 #define DHTTYPE     DHT11
 
 // MQ Gas Sensors (Analog – ADC1 channel, 12-bit 0-4095)
-// NOTE: Use ADC1 pins only (GPIO 32-39). ADC2 is used by WiFi.
 #define PIN_MQ2    34       // GPIO 34 – MQ-2  (Smoke / LPG / CO)
 #define PIN_MQ7    35       // GPIO 35 – MQ-7  (Carbon Monoxide)
 #define PIN_MQ135  32       // GPIO 32 – MQ-135 (Air Quality / NH3 / NOx)
+
+// GPS NEO-6M (HardwareSerial 2)
+#define GPS_RX_PIN 16       // ESP32 RX2 ← NEO-6M TX
+#define GPS_TX_PIN 17       // ESP32 TX2 ← NEO-6M RX
+#define GPS_BAUD   9600
 
 // Actuators
 #define PIN_BUZZER 25       // Active buzzer (HIGH = ON)
 #define PIN_LED    26       // Danger LED (HIGH = ON, via 220Ω resistor)
 
 // ─────────────────────────────────────────────────────────────
-//  5. SENSOR CALIBRATION CONSTANTS
-//
-//  The ESP32 ADC reads 0–4095 for 0–3.3V.
-//  MQ sensors output a voltage proportional to gas concentration.
-//  These LINEAR SCALE FACTORS are approximate — for lab-grade
-//  accuracy you need the Rs/R0 logarithmic curve from the datasheet.
-//  The values below are suitable for mine-safety alerting.
-//
-//  Formula used:
-//    rawADC  = analogRead(PIN_MQx)           // 0 – 4095
-//    voltage = rawADC * (3.3 / 4095.0)       // 0 – 3.3 V
-//    ppm     = voltage * SCALE_FACTOR
+//  5. MINE SITE FALLBACK COORDINATES (When indoors / no fix)
 // ─────────────────────────────────────────────────────────────
-const float MQ2_SCALE    = 3030.0;  // 3.3V full-scale ≈ 10,000 PPM (smoke / LPG / flammable gas)
-const float MQ7_SCALE    =   30.0;  // 3.3V full-scale ≈ 100 PPM    (CO)
-const float MQ135_SCALE  =   30.0;  // 3.3V full-scale ≈ 100 PPM    (air quality / toxic gas)
+const double MINE_CENTER_LAT = 12.971598;
+const double MINE_CENTER_LNG = 77.594566;
 
 // ─────────────────────────────────────────────────────────────
-//  6. SAFETY THRESHOLDS
+//  6. SENSOR CALIBRATION CONSTANTS
+// ─────────────────────────────────────────────────────────────
+const float MQ2_SCALE    = 3030.0;  // 3.3V full-scale ≈ 10,000 PPM (smoke / LPG)
+const float MQ7_SCALE    =   30.0;  // 3.3V full-scale ≈ 100 PPM    (CO)
+const float MQ135_SCALE  =   30.0;  // 3.3V full-scale ≈ 100 PPM    (air quality)
+
+// ─────────────────────────────────────────────────────────────
+//  7. SAFETY THRESHOLDS
 // ─────────────────────────────────────────────────────────────
 // Temperature (DHT11)
 const float TEMP_DANGER_C    = 40.0;   // °C
 const float TEMP_WARNING_C   = 35.0;   // °C
 const float HUMID_DANGER     = 90.0;   // %RH
 
-// MQ-2  (Smoke / LPG / Flammable Gas: Warning >= 5000 PPM, Danger >= 10000 PPM)
+// MQ-2  (Smoke / LPG: Warning >= 5000 PPM, Danger >= 10000 PPM)
 const float MQ2_DANGER_PPM   = 10000.0;
 const float MQ2_WARNING_PPM  =  5000.0;
 
@@ -148,27 +136,29 @@ const float MQ2_WARNING_PPM  =  5000.0;
 const float MQ7_DANGER_PPM   =    50.0;
 const float MQ7_WARNING_PPM  =    35.0;
 
-// MQ-135 (Air Quality / Toxic Gas: Warning >= 25 PPM, Danger >= 50 PPM)
+// MQ-135 (Air Quality: Warning >= 25 PPM, Danger >= 50 PPM)
 const float MQ135_DANGER_PPM  =   50.0;
 const float MQ135_WARNING_PPM =   25.0;
 
 // ─────────────────────────────────────────────────────────────
-//  7. TIMING
+//  8. TIMING
 // ─────────────────────────────────────────────────────────────
 const unsigned long UPLOAD_INTERVAL_MS  = 3000;   // Supabase POST every 3 s
 const unsigned long WIFI_CHECK_INTERVAL = 10000;  // WiFi reconnect check every 10 s
 
 // ─────────────────────────────────────────────────────────────
-//  8. OBJECT INSTANCES & STATE
+//  9. OBJECT INSTANCES & STATE
 // ─────────────────────────────────────────────────────────────
 DHT dht(PIN_DHT, DHTTYPE);
+TinyGPSPlus gps;
+HardwareSerial gpsSerial(2);   // Use ESP32 UART2
 
 unsigned long lastUploadTime     = 0;
 unsigned long lastWifiCheckMs    = 0;
 unsigned long buzzerPatternStart = 0;
 int           uploadCount        = 0;
 int           failCount          = 0;
-bool          prevDanger         = false;  // Edge detect for first DANGER crossing
+bool          prevDanger         = false;
 
 // ─────────────────────────────────────────────────────────────
 //  FORWARD DECLARATIONS
@@ -183,9 +173,12 @@ void   runDangerBuzzerPattern();
 void   runWarningBuzzerPattern();
 bool   sendToSupabase(float temp, float humid,
                       float mq2,  float mq7,  float mq135,
+                      double lat, double lng,
+                      bool gpsFix, int sats, float hdop,
                       const String& alertLevel);
 void   printSensorReadings(float temp, float humid,
                            float mq2,  float mq7,  float mq135,
+                           double lat, double lng, bool fix, int sats,
                            const String& alert);
 void   printDivider();
 
@@ -197,8 +190,8 @@ void setup() {
   delay(500);
 
   printDivider();
-  Serial.println("  Smart Safety Helmet — Multi-Sensor v3.0");
-  Serial.println("  DHT11 | MQ-2 | MQ-7 | MQ-135 | ESP32 | Supabase");
+  Serial.println("  Smart Safety Helmet — Multi-Sensor + GPS v4.0");
+  Serial.println("  DHT11 | MQ-2 | MQ-7 | MQ-135 | GPS NEO-6M | Supabase");
   printDivider();
 
   // Output pins
@@ -209,20 +202,20 @@ void setup() {
   Serial.println("[Init] Buzzer: GPIO" + String(PIN_BUZZER) +
                  "  LED: GPIO"    + String(PIN_LED));
 
-  // Analog input pins (input-only, no pinMode needed for ADC on ESP32)
+  // Analog input pins
   Serial.println("[Init] MQ-2:   GPIO" + String(PIN_MQ2));
   Serial.println("[Init] MQ-7:   GPIO" + String(PIN_MQ7));
   Serial.println("[Init] MQ-135: GPIO" + String(PIN_MQ135));
+
+  // GPS UART2 init
+  gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+  Serial.printf("[Init] GPS Neo-6M UART2: RX=GPIO%d, TX=GPIO%d @ %d baud\n",
+                GPS_RX_PIN, GPS_TX_PIN, GPS_BAUD);
 
   // DHT11 warm-up
   dht.begin();
   Serial.println("[DHT11] GPIO" + String(PIN_DHT) + " — 2 s warm-up...");
   delay(2000);
-
-  // MQ sensor pre-heat notice
-  Serial.println("[MQ] NOTE: MQ sensors need ~24-48 hr pre-heat burn-in");
-  Serial.println("[MQ]       for accurate PPM readings on first use.");
-  Serial.println("[MQ]       Relative readings are still valid for alerting.");
 
   // WiFi
   connectWiFi();
@@ -238,6 +231,12 @@ void setup() {
 //  MAIN LOOP
 // ═════════════════════════════════════════════════════════════
 void loop() {
+
+  // ── Constantly feed NMEA stream to TinyGPSPlus parser ─────
+  while (gpsSerial.available() > 0) {
+    char c = gpsSerial.read();
+    gps.encode(c);
+  }
 
   // ── WiFi keep-alive ───────────────────────────────────────
   if (millis() - lastWifiCheckMs >= WIFI_CHECK_INTERVAL) {
@@ -264,11 +263,31 @@ void loop() {
     float mq7PPM   = readMQ(PIN_MQ7,   MQ7_SCALE);
     float mq135PPM = readMQ(PIN_MQ135, MQ135_SCALE);
 
+    // --- GPS coordinates & satellite telemetry ---
+    double latitude  = MINE_CENTER_LAT;
+    double longitude = MINE_CENTER_LNG;
+    bool   gpsFix    = false;
+    int    sats      = 0;
+    float  hdop      = 99.9;
+
+    if (gps.location.isValid() && gps.location.age() < 5000) {
+      latitude  = gps.location.lat();
+      longitude = gps.location.lng();
+      gpsFix    = true;
+    }
+    if (gps.satellites.isValid()) {
+      sats = gps.satellites.value();
+    }
+    if (gps.hdop.isValid()) {
+      hdop = gps.hdop.hdop();
+    }
+
     // --- Alert level ---
     String alertLevel = buildAlertLevel(temperature, humidity, mq2PPM, mq7PPM, mq135PPM);
 
     // --- Print readings ---
-    printSensorReadings(temperature, humidity, mq2PPM, mq7PPM, mq135PPM, alertLevel);
+    printSensorReadings(temperature, humidity, mq2PPM, mq7PPM, mq135PPM,
+                        latitude, longitude, gpsFix, sats, alertLevel);
 
     // --- Edge-detect for new DANGER event ---
     bool nowDanger = (alertLevel == "DANGER");
@@ -286,8 +305,9 @@ void loop() {
     // --- Buzzer + LED ---
     handleBuzzerAndLED(alertLevel);
 
-    // --- Supabase ---
-    bool ok = sendToSupabase(temperature, humidity, mq2PPM, mq7PPM, mq135PPM, alertLevel);
+    // --- Supabase upload ---
+    bool ok = sendToSupabase(temperature, humidity, mq2PPM, mq7PPM, mq135PPM,
+                             latitude, longitude, gpsFix, sats, hdop, alertLevel);
     if (ok) uploadCount++; else failCount++;
     Serial.printf("[Stats] Uploads OK: %d  |  Fails: %d\n", uploadCount, failCount);
     printDivider();
@@ -301,36 +321,23 @@ void loop() {
 
 // ─────────────────────────────────────────────────────────────
 //  FUNCTION: readMQ
-//
-//  Reads a MQ sensor analog pin and returns an approximate PPM.
-//
-//  Steps:
-//   1. Average 5 samples to reduce noise.
-//   2. Convert 12-bit ADC value (0-4095) → voltage (0-3.3V).
-//   3. Multiply by scale factor to get approximate PPM.
-//
-//  scaleFactor = max_PPM_at_3.3V / 3.3
 // ─────────────────────────────────────────────────────────────
 float readMQ(int pin, float scaleFactor) {
-  long   sum = 0;
-  const  int SAMPLES = 5;
-  for (int i = 0; i < SAMPLES; i++) {
+  long sum = 0;
+  for (int i = 0; i < 8; i++) {
     sum += analogRead(pin);
     delay(2);
   }
-  float rawADC  = (float)sum / SAMPLES;
-  float voltage = rawADC * (3.3f / 4095.0f);
+  float avgRaw  = sum / 8.0;
+  float voltage = avgRaw * (3.3 / 4095.0);
   return voltage * scaleFactor;
 }
 
 // ─────────────────────────────────────────────────────────────
 //  FUNCTION: buildAlertLevel
-//  Evaluates all sensors and returns "SAFE" / "WARNING" / "DANGER"
-//  DANGER takes priority over WARNING.
 // ─────────────────────────────────────────────────────────────
 String buildAlertLevel(float temp, float humid,
-                       float mq2, float mq7, float mq135) {
-  // DANGER conditions (any one triggers)
+                       float mq2,  float mq7, float mq135) {
   if (temp   >= TEMP_DANGER_C   ||
       humid  >= HUMID_DANGER    ||
       mq2    >= MQ2_DANGER_PPM  ||
@@ -338,22 +345,19 @@ String buildAlertLevel(float temp, float humid,
       mq135  >= MQ135_DANGER_PPM) {
     return "DANGER";
   }
-  // WARNING conditions (any one triggers)
+
   if (temp   >= TEMP_WARNING_C   ||
       mq2    >= MQ2_WARNING_PPM  ||
       mq7    >= MQ7_WARNING_PPM  ||
       mq135  >= MQ135_WARNING_PPM) {
     return "WARNING";
   }
+
   return "SAFE";
 }
 
 // ─────────────────────────────────────────────────────────────
 //  FUNCTION: handleBuzzerAndLED
-//
-//  DANGER  → LED ON  +  rapid double-beep (non-blocking)
-//  WARNING → LED ON  +  slow single-beep  (non-blocking)
-//  SAFE    → LED OFF +  buzzer OFF
 // ─────────────────────────────────────────────────────────────
 void handleBuzzerAndLED(const String& alertLevel) {
   if (alertLevel == "DANGER") {
@@ -370,16 +374,9 @@ void handleBuzzerAndLED(const String& alertLevel) {
 
 // ─────────────────────────────────────────────────────────────
 //  FUNCTION: runDangerBuzzerPattern  (NON-BLOCKING)
-//
-//  Rapid double-beep cycle = 1500 ms:
-//    ▓ Beep-1  120 ms
-//    ░ Gap      100 ms
-//    ▓ Beep-2  120 ms
-//    ░ Silence 1160 ms
 // ─────────────────────────────────────────────────────────────
 void runDangerBuzzerPattern() {
   const unsigned long CYCLE  = 1500;
-  const unsigned long B1_ON  = 0;
   const unsigned long B1_OFF = 120;
   const unsigned long B2_ON  = 220;
   const unsigned long B2_OFF = 340;
@@ -394,10 +391,6 @@ void runDangerBuzzerPattern() {
 
 // ─────────────────────────────────────────────────────────────
 //  FUNCTION: runWarningBuzzerPattern  (NON-BLOCKING)
-//
-//  Slow single-beep cycle = 2000 ms:
-//    ▓ Beep    200 ms
-//    ░ Silence 1800 ms
 // ─────────────────────────────────────────────────────────────
 void runWarningBuzzerPattern() {
   const unsigned long CYCLE   = 2000;
@@ -409,32 +402,11 @@ void runWarningBuzzerPattern() {
 
 // ─────────────────────────────────────────────────────────────
 //  FUNCTION: sendToSupabase
-//
-//  HTTPS POST to Supabase REST API.
-//
-//  Headers:
-//    Content-Type:  application/json
-//    apikey:        <anon key>
-//    Authorization: Bearer <anon key>
-//    Prefer:        return=minimal   (no response body — saves RAM)
-//
-//  JSON columns sent → helmet_telemetry table:
-//    worker_id    VARCHAR   helmet identifier
-//    temperature  NUMERIC   °C  (DHT11)
-//    humidity     NUMERIC   %RH (DHT11)
-//    mq3_gas      NUMERIC   PPM – MQ-2 smoke/LPG  (stored in mq3_gas column)
-//    mq7_co       NUMERIC   PPM – MQ-7 CO
-//    mq135_air    NUMERIC   PPM – MQ-135 air quality
-//    alert_level  VARCHAR   "SAFE" / "WARNING" / "DANGER"
-//
-//  NOTE: The table column "mq3_gas" is reused for MQ-2 readings
-//  since MQ-2 measures a similar composite gas group.
-//  If you prefer a separate column, add it in supabase_schema.sql.
-//
-//  Returns true on HTTP 2xx.
 // ─────────────────────────────────────────────────────────────
 bool sendToSupabase(float temp, float humid,
                     float mq2,  float mq7,  float mq135,
+                    double lat, double lng,
+                    bool gpsFix, int sats, float hdop,
                     const String& alertLevel) {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("[Supabase] Skipped — WiFi not connected.");
@@ -442,121 +414,103 @@ bool sendToSupabase(float temp, float humid,
   }
 
   WiFiClientSecure client;
-  client.setInsecure();   // Skip TLS cert verification (OK for IoT)
+  client.setInsecure();   // Skip TLS cert verification for ESP32
 
   HTTPClient http;
   http.begin(client, SUPABASE_URL);
-  http.setTimeout(8000);  // 8 second HTTP timeout
+  http.setTimeout(8000);
 
-  // ── Headers ───────────────────────────────────────────────
+  // Headers
   http.addHeader("Content-Type",  "application/json");
   http.addHeader("apikey",        SUPABASE_KEY);
   http.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
   http.addHeader("Prefer",        "return=minimal");
 
-  // ── JSON body ─────────────────────────────────────────────
+  // JSON payload
   String body = "{";
-  body += "\"worker_id\":\""   + String(WORKER_ID)     + "\",";
-  body += "\"temperature\":"   + String(temp,   2)      + ",";
-  body += "\"humidity\":"      + String(humid,  2)      + ",";
-  body += "\"mq2_smoke\":"     + String(mq2,    2)      + ",";   // MQ-2 → dedicated mq2_smoke column
-  body += "\"mq7_co\":"        + String(mq7,    2)      + ",";
-  body += "\"mq135_air\":"     + String(mq135,  2)      + ",";
-  body += "\"alert_level\":\"" + alertLevel             + "\"";
+  body += "\"worker_id\":\""       + String(WORKER_ID)     + "\",";
+  body += "\"temperature\":"       + String(temp,   2)      + ",";
+  body += "\"humidity\":"          + String(humid,  2)      + ",";
+  body += "\"mq2_smoke\":"         + String(mq2,    2)      + ",";
+  body += "\"mq7_co\":"            + String(mq7,    2)      + ",";
+  body += "\"mq135_air\":"         + String(mq135,  2)      + ",";
+  body += "\"latitude\":"          + String(lat,    6)      + ",";
+  body += "\"longitude\":"         + String(lng,    6)      + ",";
+  body += "\"gps_fix\":"           + String(gpsFix ? "true" : "false") + ",";
+  body += "\"gps_satellites\":"    + String(sats)           + ",";
+  body += "\"gps_hdop\":"          + String(hdop,   1)      + ",";
+  body += "\"alert_level\":\""     + alertLevel             + "\"";
   body += "}";
 
-  Serial.println("[Supabase] POST → " + alertLevel + " ...");
+  Serial.println("[Supabase] POST → Status: " + alertLevel + " | Lat: " + String(lat, 5) + " Lng: " + String(lng, 5));
 
-  int    httpCode = http.POST(body);
-  String response = http.getString();
+  int httpCode = http.POST(body);
   http.end();
 
   if (httpCode >= 200 && httpCode < 300) {
-    Serial.printf("[Supabase] Success  (HTTP %d)\n", httpCode);
+    Serial.printf("[Supabase] Success (HTTP %d)\n", httpCode);
     return true;
   }
 
-  // Detailed error hints
-  Serial.printf("[Supabase] FAILED   (HTTP %d)\n", httpCode);
-  if      (httpCode < 0)   Serial.println("[Supabase] → Check URL and internet connection.");
-  else if (httpCode == 401) Serial.println("[Supabase] → Invalid SUPABASE_KEY (401 Unauthorized).");
-  else if (httpCode == 404) Serial.println("[Supabase] → Table not found — check SUPABASE_URL (404).");
-  else if (httpCode == 400) Serial.println("[Supabase] → Bad JSON body: " + response);
+  Serial.printf("[Supabase] FAILED (HTTP %d)\n", httpCode);
   return false;
 }
 
 // ─────────────────────────────────────────────────────────────
-//  FUNCTION: connectWiFi  (blocking startup, max 15 s)
+//  FUNCTION: connectWiFi
 // ─────────────────────────────────────────────────────────────
 void connectWiFi() {
-  Serial.printf("\n[WiFi] Connecting to \"%s\"", WIFI_SSID);
+  Serial.println("\n[WiFi] Connecting to: " + String(WIFI_SSID));
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
     delay(500);
     Serial.print(".");
-    attempts++;
   }
   Serial.println();
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("[WiFi] Connected!  IP: %s  |  RSSI: %d dBm\n",
-                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    Serial.println("[WiFi] Connected successfully!");
+    Serial.println("[WiFi] IP Address : " + WiFi.localIP().toString());
+    Serial.printf( "[WiFi] Signal RSSI: %d dBm\n", WiFi.RSSI());
   } else {
-    Serial.println("[WiFi] FAILED — offline mode. Uploads will be skipped.");
+    Serial.println("[WiFi] ERROR: Connection failed! Check SSID & password.");
   }
 }
 
 // ─────────────────────────────────────────────────────────────
-//  FUNCTION: ensureWiFi  (non-blocking reconnect, max 5 s)
+//  FUNCTION: ensureWiFi
 // ─────────────────────────────────────────────────────────────
 bool ensureWiFi() {
   if (WiFi.status() == WL_CONNECTED) return true;
-  Serial.println("[WiFi] Lost connection — reconnecting...");
+  Serial.println("[WiFi] Connection lost. Reconnecting...");
   WiFi.disconnect();
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  for (int i = 0; i < 10; i++) {
-    delay(500);
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.printf("[WiFi] Reconnected. IP: %s\n",
-                    WiFi.localIP().toString().c_str());
-      return true;
-    }
+  WiFi.reconnect();
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 8000) {
+    delay(400);
+    Serial.print(".");
   }
-  Serial.println("[WiFi] Reconnect failed.");
-  return false;
+  Serial.println();
+  return (WiFi.status() == WL_CONNECTED);
 }
 
 // ─────────────────────────────────────────────────────────────
 //  FUNCTION: printSensorReadings
-//  Formatted table output in Serial Monitor
 // ─────────────────────────────────────────────────────────────
 void printSensorReadings(float temp, float humid,
-                         float mq2,  float mq7, float mq135,
+                         float mq2,  float mq7,  float mq135,
+                         double lat, double lng, bool fix, int sats,
                          const String& alert) {
-  Serial.println();
-  printDivider();
-  Serial.println("  SENSOR READINGS");
-  printDivider();
-  Serial.printf("  DHT11  Temperature : %6.1f C      (DANGER >= %.0f C)\n",
-                temp, TEMP_DANGER_C);
-  Serial.printf("  DHT11  Humidity    : %6.1f %%RH   (DANGER >= %.0f %%)\n",
-                humid, HUMID_DANGER);
-  Serial.printf("  MQ-2   Smoke / LPG : %6.1f PPM   (DANGER >= %.0f PPM)\n",
-                mq2,  MQ2_DANGER_PPM);
-  Serial.printf("  MQ-7   Carbon  CO  : %6.1f PPM   (DANGER >= %.0f PPM)\n",
-                mq7,  MQ7_DANGER_PPM);
-  Serial.printf("  MQ-135 Air Quality : %6.1f PPM   (DANGER >= %.0f PPM)\n",
-                mq135, MQ135_DANGER_PPM);
-  printDivider();
-  Serial.println("  ALERT LEVEL : " + alert);
+  Serial.printf("[SENSORS] Temp: %.1f C | Hum: %.1f %% | MQ-2: %.0f PPM | MQ-7: %.0f PPM | MQ-135: %.0f PPM\n",
+                temp, humid, mq2, mq7, mq135);
+  Serial.printf("[GPS]     Lat: %.6f | Lng: %.6f | Lock: %s | Satellites: %d\n",
+                lat, lng, fix ? "YES (3D Fix)" : "NO (Using Fallback)", sats);
+  Serial.printf("[STATUS]  Alert Level: %s\n", alert.c_str());
 }
 
-// ─────────────────────────────────────────────────────────────
-//  HELPER: printDivider
-// ─────────────────────────────────────────────────────────────
 void printDivider() {
-  Serial.println("─────────────────────────────────────────────");
+  Serial.println("─────────────────────────────────────────────────────────");
 }
