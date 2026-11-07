@@ -158,66 +158,65 @@ function initLeafletMap() {
   mapInstance.addLayer(drawnItems);
 
   // Leaflet.draw control (polygon tool only — cleaner for geofencing)
-  drawControl = new L.Control.Draw({
-    position: 'topright',
-    draw: {
-      polygon: {
-        allowIntersection: false,
-        showArea: true,
-        shapeOptions: {
-          color: '#3B82F6',
-          fillColor: '#3B82F6',
-          fillOpacity: 0.15,
-          weight: 2,
-          dashArray: '5, 5'
+  if (typeof L.Control !== 'undefined' && typeof L.Control.Draw !== 'undefined') {
+    drawControl = new L.Control.Draw({
+      position: 'topright',
+      draw: {
+        polygon: {
+          allowIntersection: false,
+          showArea: true,
+          shapeOptions: {
+            color: '#3B82F6',
+            fillColor: '#3B82F6',
+            fillOpacity: 0.15,
+            weight: 2,
+            dashArray: '5, 5'
+          },
+          metric: true,
+          tooltip: {
+            start: 'Click to place first vertex',
+            cont: 'Click to continue drawing',
+            end: 'Double-click to finish zone'
+          }
         },
-        metric: true,
-        tooltip: {
-          start: 'Click to place first vertex',
-          cont: 'Click to continue drawing',
-          end: 'Double-click to finish zone'
-        }
+        rectangle: false,
+        circle:    false,
+        circlemarker: false,
+        marker:    false,
+        polyline:  false
       },
-      rectangle: false,
-      circle:    false,
-      circlemarker: false,
-      marker:    false,
-      polyline:  false
-    },
-    edit: { featureGroup: drawnItems }
-  });
-  // Don't add drawControl to map by default — we control it via button
+      edit: { featureGroup: drawnItems }
+    });
+  }
 
   // When user finishes drawing a polygon — show the name modal
-  mapInstance.on(L.Draw.Event.CREATED, function (e) {
-    pendingLayer = e.layer;
-    // Preview it on the map temporarily
-    drawnItems.addLayer(pendingLayer);
-    // Open the zone naming modal
-    openZoneModal();
-  });
-
-  // After editing existing polygon, update saved latlngs
-  mapInstance.on(L.Draw.Event.EDITED, function (e) {
-    e.layers.eachLayer(function (layer) {
-      const zone = drawnZones.find(z => z.layerRef === layer);
-      if (zone) {
-        zone.latlngs = layer.getLatLngs()[0].map(ll => ({ lat: ll.lat, lng: ll.lng }));
-        saveZonesToStorage();
-      }
+  if (typeof L.Draw !== 'undefined' && L.Draw.Event) {
+    mapInstance.on(L.Draw.Event.CREATED, function (e) {
+      pendingLayer = e.layer;
+      drawnItems.addLayer(pendingLayer);
+      openZoneModal();
     });
-    logIncident('info', 'Geofence zone boundaries updated.');
-  });
 
-  // After deleting polygon(s)
-  mapInstance.on(L.Draw.Event.DELETED, function (e) {
-    e.layers.eachLayer(function (layer) {
-      drawnZones = drawnZones.filter(z => z.layerRef !== layer);
+    mapInstance.on(L.Draw.Event.EDITED, function (e) {
+      e.layers.eachLayer(function (layer) {
+        const zone = drawnZones.find(z => z.layerRef === layer);
+        if (zone) {
+          zone.latlngs = layer.getLatLngs()[0].map(ll => ({ lat: ll.lat, lng: ll.lng }));
+          saveZonesToStorage();
+        }
+      });
+      logIncident('info', 'Geofence zone boundaries updated.');
     });
-    saveZonesToStorage();
-    renderZoneList();
-    logIncident('info', 'Geofence zone(s) removed via map editor.');
-  });
+
+    mapInstance.on(L.Draw.Event.DELETED, function (e) {
+      e.layers.eachLayer(function (layer) {
+        drawnZones = drawnZones.filter(z => z.layerRef !== layer);
+      });
+      saveZonesToStorage();
+      renderZoneList();
+      logIncident('info', 'Geofence zone(s) removed via map editor.');
+    });
+  }
 
   // Default static circles
   safeCircle = L.circle([state.mineSiteCenter.lat, state.mineSiteCenter.lng], {
@@ -357,30 +356,31 @@ function updateDashboardUI() {
   const d = state.telemetry;
 
   // 1. Environmental: DHT11
-  document.querySelectorAll('[id="tempVal"]').forEach(el => {
-    el.textContent = d.temp.toFixed(1);
-  });
-  document.querySelectorAll('[id="humidVal"]').forEach(el => {
-    el.textContent = Math.round(d.humidity);
-  });
+  const tempValEl = document.getElementById('tempVal');
+  const snapTempValEl = document.getElementById('snapTempVal');
+  if (tempValEl) tempValEl.textContent = d.temp.toFixed(1);
+  if (snapTempValEl) snapTempValEl.textContent = d.temp.toFixed(1);
+  
+  const humidValEl = document.getElementById('humidVal');
+  const snapHumidValEl = document.getElementById('snapHumidVal');
+  if (humidValEl) humidValEl.textContent = Math.round(d.humidity);
+  if (snapHumidValEl) snapHumidValEl.textContent = Math.round(d.humidity);
   
   const tempGauge = document.getElementById('tempGauge');
   const tempBadge = document.getElementById('tempBadge');
+  const snapTempBadge = document.getElementById('snapTempBadge');
   if (d.temp >= state.thresholds.tempMax) {
-    tempBadge.textContent = 'Extreme Heat';
-    tempBadge.className   = 'badge badge-danger';
-    tempGauge.style.borderColor = 'var(--status-danger)';
-    tempGauge.style.boxShadow   = '0 0 14px rgba(239,68,68,0.3)';
+    if (tempBadge) { tempBadge.textContent = 'Extreme Heat'; tempBadge.className = 'badge badge-danger'; }
+    if (snapTempBadge) { snapTempBadge.textContent = 'Extreme Heat'; snapTempBadge.className = 'badge badge-danger'; }
+    if (tempGauge) { tempGauge.style.borderColor = 'var(--status-danger)'; tempGauge.style.boxShadow = '0 0 14px rgba(239,68,68,0.3)'; }
   } else if (d.temp >= state.thresholds.tempWarning) {
-    tempBadge.textContent = 'Warning';
-    tempBadge.className   = 'badge badge-warning';
-    tempGauge.style.borderColor = 'var(--status-warning)';
-    tempGauge.style.boxShadow   = '0 0 14px rgba(245,158,11,0.25)';
+    if (tempBadge) { tempBadge.textContent = 'Warning'; tempBadge.className = 'badge badge-warning'; }
+    if (snapTempBadge) { snapTempBadge.textContent = 'Warning'; snapTempBadge.className = 'badge badge-warning'; }
+    if (tempGauge) { tempGauge.style.borderColor = 'var(--status-warning)'; tempGauge.style.boxShadow = '0 0 14px rgba(245,158,11,0.25)'; }
   } else {
-    tempBadge.textContent = 'Optimal';
-    tempBadge.className   = 'badge badge-safe';
-    tempGauge.style.borderColor = 'var(--status-info)';
-    tempGauge.style.boxShadow   = 'none';
+    if (tempBadge) { tempBadge.textContent = 'Optimal'; tempBadge.className = 'badge badge-safe'; }
+    if (snapTempBadge) { snapTempBadge.textContent = 'Optimal'; snapTempBadge.className = 'badge badge-safe'; }
+    if (tempGauge) { tempGauge.style.borderColor = 'var(--status-info)'; tempGauge.style.boxShadow = 'none'; }
   }
 
   // 2. Gas Array: MQ-7 (Carbon Monoxide)
@@ -697,9 +697,9 @@ function evaluateOverallSafety(geofenceResult) {
     }
   }
 
-  const now = new Date();
+  const syncDate = new Date();
   const lastSyncEl = document.getElementById('lastUpdatedTime');
-  if (lastSyncEl) lastSyncEl.textContent = `Last sync: ${now.toLocaleTimeString()}`;
+  if (lastSyncEl) lastSyncEl.textContent = `Last sync: ${syncDate.toLocaleTimeString()}`;
 }
 
 // ============================================================================
@@ -889,8 +889,14 @@ function startSimulator() {
 // Event Listeners & Interactive Handlers
 // ============================================================================
 function setupEventListeners() {
+  const safeListen = (id, event, handler) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener(event, handler);
+    return el;
+  };
+
   // Worker select
-  document.getElementById('workerSelect').addEventListener('change', (e) => {
+  safeListen('workerSelect', 'change', (e) => {
     state.activeWorker = e.target.value;
     logIncident('info', `Switched monitoring view to ${e.target.value}`);
     updateDashboardUI();
@@ -899,29 +905,31 @@ function setupEventListeners() {
   // Mute Siren
   const muteBtn = document.getElementById('sirenMuteBtn');
   const sirenIcon = document.getElementById('sirenIcon');
-  muteBtn.addEventListener('click', () => {
-    state.sirenMuted = !state.sirenMuted;
-    if (state.sirenMuted) {
-      stopSirenSound();
-      sirenIcon.className = 'fa-solid fa-volume-xmark';
-      muteBtn.classList.remove('active-siren');
-      logIncident('warning', 'Audible hazard siren muted by supervisor.');
-    } else {
-      sirenIcon.className = 'fa-solid fa-volume-high';
-      logIncident('info', 'Audible hazard siren enabled.');
-      updateDashboardUI();
-    }
-  });
+  if (muteBtn) {
+    muteBtn.addEventListener('click', () => {
+      state.sirenMuted = !state.sirenMuted;
+      if (state.sirenMuted) {
+        stopSirenSound();
+        if (sirenIcon) sirenIcon.className = 'fa-solid fa-volume-xmark';
+        muteBtn.classList.remove('active-siren');
+        logIncident('warning', 'Audible hazard siren muted by supervisor.');
+      } else {
+        if (sirenIcon) sirenIcon.className = 'fa-solid fa-volume-high';
+        logIncident('info', 'Audible hazard siren enabled.');
+        updateDashboardUI();
+      }
+    });
+  }
 
   // Recenter Map
-  document.getElementById('recenterMapBtn').addEventListener('click', () => {
+  safeListen('recenterMapBtn', 'click', () => {
     if (mapInstance && workerMarker) {
       mapInstance.setView(workerMarker.getLatLng(), 17, { animate: true });
     }
   });
 
   // Test Geofence Breach (Moves worker into restricted chamber)
-  document.getElementById('triggerGeofenceBreachSimBtn').addEventListener('click', () => {
+  safeListen('triggerGeofenceBreachSimBtn', 'click', () => {
     state.telemetry.lat = state.dangerZoneCenter.lat;
     state.telemetry.lng = state.dangerZoneCenter.lng;
     logIncident('danger', 'GEOFENCE ALERT: Worker has entered Restricted Hazard Shaft!');
@@ -934,7 +942,7 @@ function setupEventListeners() {
   });
 
   // Simulator Triggers
-  document.getElementById('simToxicGasBtn').addEventListener('click', () => {
+  safeListen('simToxicGasBtn', 'click', () => {
     state.telemetry.mq7_co = 72; // Above 50 PPM danger
     state.telemetry.mq135_air = 310; // Above 250 PPM danger
     logIncident('danger', 'SIMULATION TRIGGER: Carbon Monoxide (72 PPM) and Ammonia gas leak!');
@@ -943,7 +951,7 @@ function setupEventListeners() {
     updateDashboardUI();
   });
 
-  document.getElementById('simHighTempBtn').addEventListener('click', () => {
+  safeListen('simHighTempBtn', 'click', () => {
     state.telemetry.temp = 41.0; // Above 40°C danger threshold
     state.telemetry.humidity = 88;
     logIncident('danger', 'SIMULATION TRIGGER: Mine shaft extreme heat wave (41.0°C)! Temperature exceeds 40°C safety limit.');
@@ -952,7 +960,7 @@ function setupEventListeners() {
     updateDashboardUI();
   });
 
-  document.getElementById('simFallBtn').addEventListener('click', () => {
+  safeListen('simFallBtn', 'click', () => {
     state.isFallDetected = true;
     state.telemetry.accelTotal = 3.65; // High impact shock (> 2.80G)
     logIncident('danger', 'SIMULATION TRIGGER: 3.65G impact registered. Worker fall detected!');
@@ -961,7 +969,7 @@ function setupEventListeners() {
     updateDashboardUI();
   });
 
-  document.getElementById('simInactivityBtn').addEventListener('click', () => {
+  safeListen('simInactivityBtn', 'click', () => {
     state.inactivitySeconds = 65; // Above 60s timeout
     logIncident('danger', 'SIMULATION TRIGGER: Worker inactive and unresponsive for 65 seconds!');
     alertStats.suddenMovement++;
@@ -969,7 +977,7 @@ function setupEventListeners() {
     updateDashboardUI();
   });
 
-  document.getElementById('simResetNormalBtn').addEventListener('click', () => {
+  safeListen('simResetNormalBtn', 'click', () => {
     state.telemetry.temp = 27.5;
     state.telemetry.humidity = 62;
     state.telemetry.mq7_co    = 14;
@@ -989,13 +997,14 @@ function setupEventListeners() {
   });
 
   // Dismiss / Acknowledge Emergency Banner
-  document.getElementById('dismissAlertBtn').addEventListener('click', () => {
+  safeListen('dismissAlertBtn', 'click', () => {
     const now = Date.now();
     // Detect severity at time of ack so escalation can re-arm the banner
     suppressedSeverity        = lastComputedHazardSig.includes('Danger') ? 'danger' : 'warning';
     isAlertSilencedByOperator = true;
     suppressUntilMs           = now + SUPPRESS_MS; // silence for 5 minutes
-    document.getElementById('emergencyBanner').classList.add('hidden');
+    const banner = document.getElementById('emergencyBanner');
+    if (banner) banner.classList.add('hidden');
     stopSirenSound();
     const expiry = new Date(suppressUntilMs).toLocaleTimeString();
     logIncident('info', `✅ Alert ACKNOWLEDGED. Banner suppressed for 5 min (until ${expiry}).`);
@@ -1003,44 +1012,49 @@ function setupEventListeners() {
   });
 
   // Clear Logs
-  document.getElementById('clearLogsBtn').addEventListener('click', () => {
-    document.getElementById('alertLogsContainer').innerHTML = '';
+  safeListen('clearLogsBtn', 'click', () => {
+    const logs = document.getElementById('alertLogsContainer');
+    if (logs) logs.innerHTML = '';
   });
 
   // Supabase Config Modal
   const modal = document.getElementById('configModal');
-  document.getElementById('openConfigBtn').addEventListener('click', () => {
-    modal.classList.remove('hidden');
+  safeListen('openConfigBtn', 'click', () => {
+    if (modal) modal.classList.remove('hidden');
   });
-  document.getElementById('closeConfigBtn').addEventListener('click', () => {
-    modal.classList.add('hidden');
+  safeListen('closeConfigBtn', 'click', () => {
+    if (modal) modal.classList.add('hidden');
   });
-  document.getElementById('saveConfigBtn').addEventListener('click', () => {
+  safeListen('saveConfigBtn', 'click', () => {
     saveSupabaseConfig();
   });
 
   // ── Draw Zone button ─────────────────────────────────────────────────────
   const drawBtn = document.getElementById('startDrawPolygonBtn');
-  drawBtn.addEventListener('click', () => {
-    if (!mapInstance) return;
-    const isActive = drawBtn.classList.contains('drawing-active');
-    if (isActive) {
-      // Cancel draw mode
-      mapInstance.removeControl(drawControl);
-      drawBtn.classList.remove('drawing-active');
-      drawBtn.innerHTML = '<i class="fa-solid fa-draw-polygon"></i> Draw Zone';
-    } else {
-      // Activate draw mode — add control + auto-start polygon tool
-      mapInstance.addControl(drawControl);
-      drawBtn.classList.add('drawing-active');
-      drawBtn.innerHTML = '<i class="fa-solid fa-xmark"></i> Cancel Draw';
-      // Programmatically trigger the polygon draw handler
-      new L.Draw.Polygon(mapInstance, drawControl.options.draw.polygon).enable();
-    }
-  });
+  if (drawBtn) {
+    drawBtn.addEventListener('click', () => {
+      if (!mapInstance) return;
+      const isActive = drawBtn.classList.contains('drawing-active');
+      if (isActive) {
+        // Cancel draw mode
+        if (drawControl) mapInstance.removeControl(drawControl);
+        drawBtn.classList.remove('drawing-active');
+        drawBtn.innerHTML = '<i class="fa-solid fa-draw-polygon"></i> Draw Zone';
+      } else {
+        // Activate draw mode — add control + auto-start polygon tool
+        if (drawControl) {
+          mapInstance.addControl(drawControl);
+          drawBtn.classList.add('drawing-active');
+          drawBtn.innerHTML = '<i class="fa-solid fa-xmark"></i> Cancel Draw';
+          if (typeof L !== 'undefined' && L.Draw && L.Draw.Polygon) {
+            new L.Draw.Polygon(mapInstance, drawControl.options.draw.polygon).enable();
+          }
+        }
+      }
+    });
+  }
 
   // ── Zone create modal events ─────────────────────────────────────────────
-  const zoneModal    = document.getElementById('zoneCreateModal');
   const zoneTypeSelect = document.getElementById('zoneTypeSelect');
   const zoneTypeDesc   = document.getElementById('zoneTypeDesc');
 
@@ -1050,29 +1064,27 @@ function setupEventListeners() {
     safe:       { cls: 'type-safe',    icon: 'fa-shield-check', color: 'var(--status-safe)', text: 'This is an authorized zone — no alert is triggered on entry.' }
   };
 
-  zoneTypeSelect.addEventListener('change', () => {
-    const info = typeDescMap[zoneTypeSelect.value];
-    zoneTypeDesc.className = 'zone-type-desc ' + info.cls;
-    zoneTypeDesc.innerHTML = `<i class="fa-solid ${info.icon}" style="color:${info.color};flex-shrink:0"></i> ${info.text}`;
-  });
+  if (zoneTypeSelect && zoneTypeDesc) {
+    zoneTypeSelect.addEventListener('change', () => {
+      const info = typeDescMap[zoneTypeSelect.value];
+      if (info) {
+        zoneTypeDesc.className = 'zone-type-desc ' + info.cls;
+        zoneTypeDesc.innerHTML = `<i class="fa-solid ${info.icon}" style="color:${info.color};flex-shrink:0"></i> ${info.text}`;
+      }
+    });
+  }
 
-  document.getElementById('cancelZoneBtn').addEventListener('click', () => {
-    discardPendingZone();
-  });
-  document.getElementById('discardZoneBtn').addEventListener('click', () => {
-    discardPendingZone();
-  });
-  document.getElementById('saveZoneBtn').addEventListener('click', () => {
-    saveNewZone();
-  });
+  safeListen('cancelZoneBtn', 'click', () => discardPendingZone());
+  safeListen('discardZoneBtn', 'click', () => discardPendingZone());
+  safeListen('saveZoneBtn', 'click', () => saveNewZone());
 
   // ── Default circle toggles ───────────────────────────────────────────────
-  document.getElementById('toggleSafeCircle').addEventListener('change', function () {
-    if (!mapInstance) return;
+  safeListen('toggleSafeCircle', 'change', function () {
+    if (!mapInstance || !safeCircle) return;
     this.checked ? safeCircle.addTo(mapInstance) : mapInstance.removeLayer(safeCircle);
   });
-  document.getElementById('toggleDangerCircle').addEventListener('change', function () {
-    if (!mapInstance) return;
+  safeListen('toggleDangerCircle', 'change', function () {
+    if (!mapInstance || !dangerCircle) return;
     this.checked ? dangerCircle.addTo(mapInstance) : mapInstance.removeLayer(dangerCircle);
   });
 }
@@ -1552,7 +1564,7 @@ function updateAlertFrequenciesChart() {
 // ============================================================================
 // Sidebar Tab Switching Navigation
 // ============================================================================
-function initTabNavigation() {
+function switchTab(targetTabId, updateHash = true) {
   const navLinks = document.querySelectorAll('.sidebar-nav .nav-link');
   const tabPanes = document.querySelectorAll('.tab-pane');
   const viewTitle = document.getElementById('viewMainTitle');
@@ -1566,51 +1578,91 @@ function initTabNavigation() {
     'tab-history':   'Historical Telemetry Logs'
   };
 
+  const targetPane = document.getElementById(targetTabId);
+  if (!targetPane) return;
+
+  navLinks.forEach(l => {
+    if (l.getAttribute('data-tab') === targetTabId) {
+      l.classList.add('active');
+    } else {
+      l.classList.remove('active');
+    }
+  });
+
+  tabPanes.forEach(pane => {
+    if (pane.id === targetTabId) {
+      pane.classList.add('active');
+    } else {
+      pane.classList.remove('active');
+    }
+  });
+
+  if (viewTitle && titles[targetTabId]) {
+    viewTitle.textContent = titles[targetTabId];
+  }
+
+  // Update URL hash cleanly without causing page reload
+  if (updateHash) {
+    const rawHash = targetTabId.replace(/^tab-/, '');
+    if (window.location.hash !== '#' + rawHash) {
+      try {
+        history.replaceState(null, '', '#' + rawHash);
+      } catch (e) {
+        window.location.hash = rawHash;
+      }
+    }
+  }
+
+  // Move interactive map section between Live Map and Zones seamlessly
+  const mapSection = document.getElementById('interactiveMapSection');
+  if (targetTabId === 'tab-live-map') {
+    const slotLive = document.getElementById('mapSlotLive');
+    if (mapSection && slotLive && mapSection.parentElement !== slotLive) {
+      slotLive.appendChild(mapSection);
+    }
+    ensureMapReady();
+  } else if (targetTabId === 'tab-zones') {
+    const slotZones = document.getElementById('mapSlotZones');
+    if (mapSection && slotZones && mapSection.parentElement !== slotZones) {
+      slotZones.appendChild(mapSection);
+    }
+    renderZonesTable();
+    ensureMapReady();
+  }
+
+  // Close mobile drawer if opened
+  const sidebar = document.getElementById('appSidebar');
+  if (sidebar && sidebar.classList.contains('open')) {
+    sidebar.classList.remove('open');
+  }
+}
+
+function initTabNavigation() {
+  const navLinks = document.querySelectorAll('.sidebar-nav .nav-link');
+
   navLinks.forEach(link => {
     link.addEventListener('click', (e) => {
       e.preventDefault();
       const targetTabId = link.getAttribute('data-tab');
-      if (!targetTabId) return;
-
-      navLinks.forEach(l => l.classList.remove('active'));
-      link.classList.add('active');
-
-      tabPanes.forEach(pane => {
-        if (pane.id === targetTabId) {
-          pane.classList.add('active');
-        } else {
-          pane.classList.remove('active');
-        }
-      });
-
-      if (viewTitle && titles[targetTabId]) {
-        viewTitle.textContent = titles[targetTabId];
-      }
-
-      // Move interactive map section between Live Map and Zones seamlessly
-      const mapSection = document.getElementById('interactiveMapSection');
-      if (targetTabId === 'tab-live-map') {
-        const slotLive = document.getElementById('mapSlotLive');
-        if (mapSection && slotLive && mapSection.parentElement !== slotLive) {
-          slotLive.appendChild(mapSection);
-        }
-        ensureMapReady();
-      } else if (targetTabId === 'tab-zones') {
-        const slotZones = document.getElementById('mapSlotZones');
-        if (mapSection && slotZones && mapSection.parentElement !== slotZones) {
-          slotZones.appendChild(mapSection);
-        }
-        renderZonesTable();
-        ensureMapReady();
-      }
-
-      // Close mobile drawer if opened
-      const sidebar = document.getElementById('appSidebar');
-      if (sidebar && sidebar.classList.contains('open')) {
-        sidebar.classList.remove('open');
+      if (targetTabId) {
+        switchTab(targetTabId, true);
       }
     });
   });
+
+  // Handle URL hash on initial load & hash changes (e.g. smart-helmet.vercel.app/#devices)
+  function handleHash() {
+    const rawHash = window.location.hash.replace(/^#/, '').trim();
+    if (rawHash) {
+      const candidateTabId = 'tab-' + rawHash;
+      if (document.getElementById(candidateTabId)) {
+        switchTab(candidateTabId, false);
+      }
+    }
+  }
+
+  handleHash();
+  window.addEventListener('hashchange', handleHash);
 
   // Mobile sidebar controls
   const toggleBtn = document.getElementById('sidebarToggleBtn');
@@ -1642,19 +1694,16 @@ function ensureMapReady() {
   if (!mapInstance) {
     initLeafletMap();
   }
-  setTimeout(() => {
-    if (mapInstance) {
-      mapInstance.invalidateSize();
-      if (workerMarker) {
-        mapInstance.setView(workerMarker.getLatLng(), mapInstance.getZoom() || 17);
+  [50, 200, 450].forEach(delay => {
+    setTimeout(() => {
+      if (mapInstance) {
+        mapInstance.invalidateSize(true);
+        if (workerMarker) {
+          mapInstance.setView(workerMarker.getLatLng(), mapInstance.getZoom() || 17);
+        }
       }
-    }
-  }, 100);
-  setTimeout(() => {
-    if (mapInstance) {
-      mapInstance.invalidateSize();
-    }
-  }, 350);
+    }, delay);
+  });
 }
 
 /** Populate Zones Table with default and custom drawn geofences */
