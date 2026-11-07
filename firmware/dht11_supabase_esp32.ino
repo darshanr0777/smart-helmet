@@ -471,6 +471,12 @@ bool sendToSupabase(float temp, float humid,
 void connectWiFi() {
   Serial.println("\n[WiFi] Connecting to: " + String(WIFI_SSID));
   WiFi.mode(WIFI_STA);
+  
+  // Set Google Public DNS to avoid hotspot DNS resolution issues
+  IPAddress dns1(8, 8, 8, 8);
+  IPAddress dns2(8, 8, 4, 4);
+  WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, dns1, dns2);
+
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   unsigned long start = millis();
