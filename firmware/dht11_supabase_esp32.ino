@@ -414,11 +414,15 @@ bool sendToSupabase(float temp, float humid,
   }
 
   WiFiClientSecure client;
-  client.setInsecure();   // Skip TLS cert verification for ESP32
+  client.setInsecure();
+  client.setTimeout(12);
 
   HTTPClient http;
-  http.begin(client, SUPABASE_URL);
-  http.setTimeout(8000);
+  bool beginOk = http.begin(client, SUPABASE_URL);
+  if (!beginOk) {
+    http.begin(SUPABASE_URL);
+  }
+  http.setTimeout(10000);
 
   // Headers
   http.addHeader("Content-Type",  "application/json");
@@ -442,17 +446,22 @@ bool sendToSupabase(float temp, float humid,
   body += "\"alert_level\":\""     + alertLevel             + "\"";
   body += "}";
 
-  Serial.println("[Supabase] POST → Status: " + alertLevel + " | Lat: " + String(lat, 5) + " Lng: " + String(lng, 5));
-
   int httpCode = http.POST(body);
-  http.end();
 
   if (httpCode >= 200 && httpCode < 300) {
     Serial.printf("[Supabase] Success (HTTP %d)\n", httpCode);
+    http.end();
     return true;
   }
 
-  Serial.printf("[Supabase] FAILED (HTTP %d)\n", httpCode);
+  if (httpCode > 0) {
+    String response = http.getString();
+    Serial.printf("[Supabase] FAILED (HTTP %d): %s\n", httpCode, response.c_str());
+  } else {
+    Serial.printf("[Supabase] Network Error: %s (code %d)\n", http.errorToString(httpCode).c_str(), httpCode);
+  }
+
+  http.end();
   return false;
 }
 
