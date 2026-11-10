@@ -32,6 +32,8 @@
 #include <TinyGPSPlus.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
+#include "soc/soc.h"             // Power management
+#include "soc/rtc_cntl_reg.h"    // Disable brownout reset detector
 
 // ==========================================
 // 1. NETWORK & SUPABASE CONFIGURATION
@@ -255,6 +257,7 @@ void connectWiFi() {
 // 8. SETUP
 // ==========================================
 void setup() {
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // Disable brownout detector to prevent restart loops
   Serial.begin(115200);
   delay(1000);
   Serial.println("\n[MineGuard] ============================================");
