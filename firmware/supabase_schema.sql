@@ -166,6 +166,10 @@ ALTER TABLE public.helmet_telemetry
 ALTER TABLE public.helmet_telemetry
     ADD COLUMN IF NOT EXISTS mq2_smoke NUMERIC(7, 2);
 
+-- Fix: ensure mq3_gas column can accept large PPM values without numeric overflow
+ALTER TABLE public.helmet_telemetry
+    ALTER COLUMN mq3_gas TYPE NUMERIC(8, 2);
+
 -- Migration 5c: Backfill & Auto-sync mq2_smoke and mq3_gas
 -- Automatically syncs existing and incoming rows so NULLs disappear even before re-flashing!
 UPDATE public.helmet_telemetry

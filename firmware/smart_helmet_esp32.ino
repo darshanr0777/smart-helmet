@@ -193,7 +193,7 @@ bool sendTelemetryToSupabase(
   body += "\"mq2_smoke\":"         + String(mq2, 2)                  + ",";
   body += "\"mq7_co\":"            + String(mq7, 2)                  + ",";
   body += "\"mq135_air\":"         + String(mq135, 2)                + ",";
-  body += "\"mq3_gas\":"           + String(mq2, 2)                  + ","; // Backwards compatibility
+  body += "\"mq3_gas\":0.05,";                                         // Safe constant to avoid legacy column numeric overflow
   body += "\"latitude\":"          + String(lat, 6)                  + ",";
   body += "\"longitude\":"         + String(lng, 6)                  + ",";
   body += "\"accel_total\":"       + String(accel, 2)                + ",";
