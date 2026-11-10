@@ -38,8 +38,8 @@
 // ==========================================
 // 1. NETWORK & SUPABASE CONFIGURATION
 // ==========================================
-const char* WIFI_SSID     = "darshan";
-const char* WIFI_PASSWORD = "12345678";
+const char* WIFI_SSID     = "RH-2.4G-99FC50";
+const char* WIFI_PASSWORD = "44953B99FC50";
 
 const char* SUPABASE_URL  = "https://srkowkuclkimtwhkiutg.supabase.co/rest/v1/helmet_telemetry";
 const char* SUPABASE_KEY  = "sb_publishable_kWHQSFzZEblEqWzlTwZuvg_ISGBBUCu";
@@ -332,8 +332,8 @@ void loop() {
     }
   }
 
-  unsigned long inactivityDuration = millis() - lastMotionDetectedTime;
-  bool isInactiveAlarm = (inactivityDuration >= INACTIVITY_LIMIT_MS);
+  unsigned long inactivityDuration = mpuAvailable ? (millis() - lastMotionDetectedTime) : 0;
+  bool isInactiveAlarm = mpuAvailable && (inactivityDuration >= INACTIVITY_LIMIT_MS);
 
   // 3. Continuous buzzer pattern if dangerous state
   if (prevDanger) {
