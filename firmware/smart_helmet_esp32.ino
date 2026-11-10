@@ -2,29 +2,31 @@
  * ==============================================================================
  * Project: IOT BASED SMART SAFETY HELMET FOR MINE WORKERS
  * Platform: ESP32 Dev Module
- * Sensors:
- *   - MQ-3   (Alcohol / Hydrocarbons / Methane trace) -> Analog Pin (GPIO 34)
- *   - MQ-7   (Carbon Monoxide - CO)                   -> Analog Pin (GPIO 35)
- *   - MQ-135 (Air Quality / NH3 / NOx / Smoke)        -> Analog Pin (GPIO 32)
- *   - DHT11  (Temperature & Humidity)                 -> Digital Pin (GPIO 4)
- *   - GPS Neo-6M (Location & Geofencing)              -> HardwareSerial2 (RX: 16, TX: 17)
- *   - MPU-6050 (6-axis Accelerometer & Gyroscope)     -> I2C (SDA: 21, SCL: 22)
- * Actuators / Indicators:
- *   - Buzzer                                          -> GPIO 25
- *   - Danger LED                                      -> GPIO 26
- * Cloud Connectivity:
- *   - WiFi (Hotspot) + Supabase REST API (HTTPS POST)
- *
- * GPS NEO-6M WIRING:
- *   NEO-6M VCC  -> ESP32 3.3V  (or 5V if module has onboard regulator)
- *   NEO-6M GND  -> ESP32 GND
- *   NEO-6M TX   -> ESP32 GPIO 16  (UART2 RX)
- *   NEO-6M RX   -> ESP32 GPIO 17  (UART2 TX)
+ * 
+ * SENSOR ARRAY & WIRING:
+ *   - DHT11      (Temperature & Humidity)             -> GPIO 4
+ *   - MQ-2       (Smoke / LPG / Flammable Gas)        -> GPIO 34 (ADC1_CH6)
+ *   - MQ-7       (Carbon Monoxide - CO)               -> GPIO 35 (ADC1_CH7)
+ *   - MQ-135     (Air Quality / Hazardous Gases)      -> GPIO 32 (ADC1_CH4)
+ *   - GPS Neo-6M (Location & Geofencing)              -> UART2 (RX2: GPIO 16, TX2: GPIO 17)
+ *   - MPU-6050   (6-Axis Fall & Inactivity Tracker)   -> I2C (SDA: GPIO 21, SCL: GPIO 22)
+ * 
+ * ACTUATORS:
+ *   - Active Buzzer                                   -> GPIO 25
+ *   - Alert LED (with 220Ω resistor)                  -> GPIO 26
+ * 
+ * PINOUT REMINDER ON ESP32 BOARD:
+ *   - GPIO 16 is labeled "RX2" (under D4 on left rail)
+ *   - GPIO 17 is labeled "TX2" (under RX2 on left rail)
+ *   - GPS TX connects to ESP32 RX2 (GPIO 16)
+ *   - GPS RX connects to ESP32 TX2 (GPIO 17)
+ *   - MPU-6050 SDA connects to GPIO 21, SCL connects to GPIO 22
  * ==============================================================================
  */
 
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <Wire.h>
 #include <DHT.h>
 #include <TinyGPSPlus.h>
@@ -44,42 +46,48 @@ const char* WORKER_ID     = "W-101";
 // ==========================================
 // 2. PIN DEFINITIONS
 // ==========================================
-#define PIN_MQ3      34
-#define PIN_MQ7      35
-#define PIN_MQ135    32
 #define PIN_DHT       4
+#define DHTTYPE       DHT11
+
+#define PIN_MQ2      34       // MQ-2 Smoke / Flammable Gas
+#define PIN_MQ7      35       // MQ-7 Carbon Monoxide
+#define PIN_MQ135    32       // MQ-135 Air Quality
+
+#define GPS_RX_PIN   16       // ESP32 RX2 <-- NEO-6M TX
+#define GPS_TX_PIN   17       // ESP32 TX2 <-- NEO-6M RX
+#define GPS_BAUD     9600
+
 #define PIN_BUZZER   25
 #define PIN_LED      26
 
-#define DHTTYPE      DHT11
-#define GPS_RX_PIN   16   // ESP32 RX2 <-- NEO-6M TX
-#define GPS_TX_PIN   17   // ESP32 TX2 <-- NEO-6M RX
-#define GPS_BAUD     9600
+// ==========================================
+// 3. CALIBRATION & THRESHOLDS
+// ==========================================
+const float MQ2_SCALE     = 3030.0; // 3.3V full-scale ≈ 10,000 PPM
+const float MQ7_SCALE     =   30.0; // 3.3V full-scale ≈ 100 PPM
+const float MQ135_SCALE   =   30.0; // 3.3V full-scale ≈ 100 PPM
 
-// ==========================================
-// 3. GPS DEBUG MODE
-// Set to true to mirror raw NMEA sentences
-// to Serial Monitor for wiring diagnosis.
-// Set to false for normal operation.
-// ==========================================
-#define GPS_DEBUG  false
+const float TEMP_DANGER_C     = 40.0; // °C
+const float TEMP_WARNING_C    = 35.0; // °C
+const float HUMID_DANGER      = 90.0; // %RH
 
-// ==========================================
-// 4. THRESHOLDS & GEOFENCE SPECS
-// ==========================================
-const float TEMP_DANGER_CELSIUS       = 40.0;  // Alert threshold lowered to 40°C
-const int   MQ7_DANGER_PPM            = 50;
-const int   MQ135_DANGER_PPM          = 250;
-const float MQ3_DANGER_MGL            = 0.40;
-const float FALL_THRESHOLD_G          = 2.80;
-const unsigned long INACTIVITY_LIMIT_MS = 60000;
+const float MQ2_DANGER_PPM    = 10000.0;
+const float MQ2_WARNING_PPM   =  5000.0;
+const float MQ7_DANGER_PPM    =    50.0;
+const float MQ7_WARNING_PPM   =    35.0;
+const float MQ135_DANGER_PPM  =    50.0;
+const float MQ135_WARNING_PPM =    25.0;
 
+const float FALL_THRESHOLD_G  =  2.80; // High-G impact shock trigger
+const unsigned long INACTIVITY_LIMIT_MS = 60000; // 60s Man-Down timeout
+
+// Fallback Coordinates (Mine Site Center)
 const double MINE_CENTER_LAT    = 12.971598;
 const double MINE_CENTER_LNG    = 77.594566;
 const double SAFE_RADIUS_METERS = 180.0;
 
 // ==========================================
-// 5. OBJECT INSTANCES & TIMERS
+// 4. OBJECT INSTANCES & TIMERS
 // ==========================================
 DHT dht(PIN_DHT, DHTTYPE);
 TinyGPSPlus gps;
@@ -90,16 +98,16 @@ unsigned long lastTelemetryUpload    = 0;
 const unsigned long UPLOAD_INTERVAL_MS = 3000;
 
 unsigned long lastMotionDetectedTime = 0;
-unsigned long lastBuzzerPatternTime  = 0;  // Timer for temperature buzzer pattern
-bool          tempAlertActive        = false;  // True while temp >= TEMP_DANGER_CELSIUS
+unsigned long buzzerPatternStart     = 0;
 unsigned long lastGpsLogTime         = 0;
 
 bool isFallTriggered    = false;
 bool isGeofenceBreached = false;
 bool mpuAvailable       = false;
+bool prevDanger         = false;
 
 // ==========================================
-// 6. HELPER: Haversine Distance (Meters)
+// 5. HELPER FUNCTIONS
 // ==========================================
 double calculateDistanceMeters(double lat1, double lon1, double lat2, double lon2) {
   const double R = 6371000.0;
@@ -111,233 +119,121 @@ double calculateDistanceMeters(double lat1, double lon1, double lat2, double lon
   return R * 2.0 * atan2(sqrt(a), sqrt(1.0 - a));
 }
 
-// ==========================================
-// 7. FUNCTION DECLARATIONS
-// ==========================================
-void connectWiFi();
-void runTemperatureBuzzerPattern();  // Rapid double-beep for heat alerts
-void sendTelemetryToSupabase(
-  float temp, float humid, float mq7, float mq135, float mq3,
-  double lat, double lng, float accel, bool fall, int inactivitySecs,
-  int sats, float hdop, bool gpsFix, const char* status
-);
-
-// ==========================================
-// 8. SETUP
-// ==========================================
-void setup() {
-  Serial.begin(115200);
-  delay(1000);
-  Serial.println("\n[MineGuard] ============================================");
-  Serial.println("[MineGuard] Smart Safety Helmet Booting...");
-  Serial.println("[MineGuard] ============================================");
-
-  pinMode(PIN_BUZZER, OUTPUT);
-  pinMode(PIN_LED, OUTPUT);
-  digitalWrite(PIN_BUZZER, LOW);
-  digitalWrite(PIN_LED, LOW);
-
-  // --- DHT11 ---
-  dht.begin();
-  Serial.println("[MineGuard] DHT11 Initialized.");
-
-  // --- GPS NEO-6M ---
-  // IMPORTANT: Always pass RX and TX pins explicitly for ESP32 UART2
-  gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
-  delay(100);
-  Serial.printf("[GPS] UART2 started on RX=GPIO%d, TX=GPIO%d @ %d baud\n",
-                GPS_RX_PIN, GPS_TX_PIN, GPS_BAUD);
-  Serial.println("[GPS] Waiting for satellite fix... (30-120 sec outdoors)");
-
-  // --- MPU-6050 ---
-  Wire.begin(21, 22);
-  if (!mpu.begin()) {
-    Serial.println("[MineGuard] Warning: MPU6050 not found. Motion tracking disabled.");
-    mpuAvailable = false;
-  } else {
-    mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
-    mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
-    mpuAvailable = true;
-    Serial.println("[MineGuard] MPU-6050 Initialized.");
+float readMQ(int pin, float scaleFactor) {
+  long sum = 0;
+  for (int i = 0; i < 8; i++) {
+    sum += analogRead(pin);
+    delay(2);
   }
-
-  // --- WiFi ---
-  connectWiFi();
-  lastMotionDetectedTime = millis();
-  Serial.println("[MineGuard] Boot complete. Entering main loop.\n");
+  return (sum / 8.0) * (3.3 / 4095.0) * scaleFactor;
 }
 
-// ==========================================
-// 9. MAIN LOOP
-// ==========================================
-void loop() {
-
-  // Feed every byte from GPS into TinyGPSPlus parser
-  while (gpsSerial.available() > 0) {
-    char c = gpsSerial.read();
-    gps.encode(c);
-    if (GPS_DEBUG) Serial.write(c);   // Mirror raw NMEA when debugging
-  }
-
-  // GPS Watchdog: print status every 5 seconds
-  if (millis() - lastGpsLogTime >= 5000) {
-    lastGpsLogTime = millis();
-    if (gps.charsProcessed() < 10) {
-      Serial.println("[GPS] WARNING: No data from GPS module!");
-      Serial.println("      Check: NEO-6M TX -> ESP32 GPIO 16 (RX2)");
-    } else if (!gps.location.isValid()) {
-      Serial.printf("[GPS] Searching... Chars=%lu  Sats=%d  Fix=No\n",
-                    gps.charsProcessed(), (int)gps.satellites.value());
-    } else {
-      Serial.printf("[GPS] FIX  Lat=%.6f  Lng=%.6f  Sats=%d  HDOP=%.1f  Age=%lums\n",
-                    gps.location.lat(), gps.location.lng(),
-                    (int)gps.satellites.value(),
-                    gps.hdop.hdop(),
-                    gps.location.age());
-    }
-  }
-
-  // Motion & Fall Detection (MPU-6050)
-  float totalAccelG = 1.0;
-  if (mpuAvailable) {
-    sensors_event_t a, g_ev, temp_mpu;
-    if (mpu.getEvent(&a, &g_ev, &temp_mpu)) {
-      float ax = a.acceleration.x / 9.81;
-      float ay = a.acceleration.y / 9.81;
-      float az = a.acceleration.z / 9.81;
-      totalAccelG = sqrt(ax * ax + ay * ay + az * az);
-
-      if (totalAccelG >= FALL_THRESHOLD_G) {
-        isFallTriggered = true;
-        Serial.println("[ALERT] High-G impact! Fall event triggered.");
-      }
-      if (fabs(totalAccelG - 1.0) > 0.15) {
-        lastMotionDetectedTime = millis();
-      }
-    }
-  }
-
-  // Inactivity Evaluation
-  unsigned long inactivityDuration = millis() - lastMotionDetectedTime;
-  bool isInactiveAlarm = (inactivityDuration >= INACTIVITY_LIMIT_MS);
-
-  // Gas Sensor Readings
-  float mq3GasPPM   = (analogRead(PIN_MQ3)   / 4095.0) * 0.8;
-  float mq7CoPPM    = (analogRead(PIN_MQ7)   / 4095.0) * 100.0;
-  float mq135AirPPM = (analogRead(PIN_MQ135) / 4095.0) * 400.0;
-
-  // DHT11 Climate
-  float temperature = dht.readTemperature();
-  float humidity    = dht.readHumidity();
-  if (isnan(temperature)) temperature = 28.0;
-  if (isnan(humidity))    humidity    = 60.0;
-
-  // GPS Location & Quality
-  double currentLat = MINE_CENTER_LAT;
-  double currentLng = MINE_CENTER_LNG;
-  int    gpsSats    = 0;
-  float  gpsHDOP    = 99.9;
-  bool   gpsFixed   = gps.location.isValid() && (gps.location.age() < 5000);
-
-  if (gpsFixed) {
-    currentLat = gps.location.lat();
-    currentLng = gps.location.lng();
-    gpsSats    = (int)gps.satellites.value();
-    gpsHDOP    = (float)gps.hdop.hdop();
-  }
-
-  // Geofence Evaluation (only when GPS has a valid fix)
-  double distFromBase = calculateDistanceMeters(currentLat, currentLng, MINE_CENTER_LAT, MINE_CENTER_LNG);
-  isGeofenceBreached  = gpsFixed && (distFromBase > SAFE_RADIUS_METERS);
-
-  // Overall Danger Assessment
-  bool isTempDanger  = (temperature >= TEMP_DANGER_CELSIUS);
-  bool isCritical    = (mq7CoPPM    >= MQ7_DANGER_PPM)    ||
-                       (mq135AirPPM >= MQ135_DANGER_PPM)   ||
-                       (mq3GasPPM   >= MQ3_DANGER_MGL)     ||
-                       isTempDanger || isFallTriggered      ||
-                       isInactiveAlarm || isGeofenceBreached;
-
-  // ── Temperature-specific buzzer pattern (rapid double-beep every 1.5 s) ──
-  // This gives workers a distinct audible cue that the hazard is HEAT,
-  // rather than the continuous tone used for gas / fall / geofence alerts.
-  if (isTempDanger) {
-    if (!tempAlertActive) {
-      tempAlertActive = true;
-      Serial.printf("[TEMP ALERT] Temperature %.1f C exceeds %.1f C threshold!\n",
-                    temperature, TEMP_DANGER_CELSIUS);
-    }
-    runTemperatureBuzzerPattern();   // Non-blocking pattern generator
+void runDangerBuzzerPattern() {
+  unsigned long phase = (millis() - buzzerPatternStart) % 1500;
+  // Rapid double-beep: ON 120ms | OFF 100ms | ON 120ms | OFF 1160ms
+  if (phase < 120 || (phase >= 220 && phase < 340)) {
+    digitalWrite(PIN_BUZZER, HIGH);
   } else {
-    tempAlertActive = false;
-    // Only drive buzzer/LED with continuous ON if other hazards are active
-    if (isCritical) {
-      digitalWrite(PIN_BUZZER, HIGH);
-      digitalWrite(PIN_LED,    HIGH);
-    } else {
-      digitalWrite(PIN_BUZZER, LOW);
-      digitalWrite(PIN_LED,    LOW);
-    }
+    digitalWrite(PIN_BUZZER, LOW);
   }
-
-  // LED always mirrors overall critical state
-  if (isTempDanger) {
-    digitalWrite(PIN_LED, HIGH);   // Keep LED solid ON during heat alert
-  }
-
-  // Supabase Telemetry Upload (every 3 seconds)
-  if (millis() - lastTelemetryUpload >= UPLOAD_INTERVAL_MS) {
-    lastTelemetryUpload = millis();
-    // Determine alert string
-    const char* alertStatus = isCritical ? "DANGER" : "SAFE";
-    sendTelemetryToSupabase(
-      temperature, humidity, mq7CoPPM, mq135AirPPM, mq3GasPPM,
-      currentLat, currentLng, totalAccelG,
-      isFallTriggered, (int)(inactivityDuration / 1000),
-      gpsSats, gpsHDOP, gpsFixed,
-      alertStatus
-    );
-    isFallTriggered = false;  // Reset one-shot fall flag after reporting
-  }
-
-  delay(50);
 }
 
-// ==========================================
-// 9b. TEMPERATURE BUZZER PATTERN
-//     Rapid double-beep: beep-beep ... pause ... repeat
-//     Pattern: ON 120ms | OFF 100ms | ON 120ms | OFF 1160ms
-//     Total cycle: ~1500 ms (1.5 seconds per double-beep)
-//     Runs non-blocking using millis().
-// ==========================================
-void runTemperatureBuzzerPattern() {
-  // Phase timing within the 1500 ms cycle (ms from cycle start)
-  const unsigned long BEEP1_ON  = 0;
-  const unsigned long BEEP1_OFF = 120;
-  const unsigned long BEEP2_ON  = 220;
-  const unsigned long BEEP2_OFF = 340;
-  const unsigned long CYCLE_MS  = 1500;
-
-  unsigned long phase = (millis() - lastBuzzerPatternTime) % CYCLE_MS;
-
-  if (phase < BEEP1_OFF) {
-    digitalWrite(PIN_BUZZER, HIGH);   // First beep ON
-  } else if (phase < BEEP2_ON) {
-    digitalWrite(PIN_BUZZER, LOW);    // Gap between beeps
-  } else if (phase < BEEP2_OFF) {
-    digitalWrite(PIN_BUZZER, HIGH);   // Second beep ON
+void handleBuzzerAndLED(const String& alertLevel) {
+  if (alertLevel == "DANGER") {
+    digitalWrite(PIN_LED, HIGH);
+    runDangerBuzzerPattern();
+  } else if (alertLevel == "WARNING") {
+    digitalWrite(PIN_LED, HIGH);
+    unsigned long phase = (millis() - buzzerPatternStart) % 2000;
+    digitalWrite(PIN_BUZZER, (phase < 200) ? HIGH : LOW);
   } else {
-    digitalWrite(PIN_BUZZER, LOW);    // Silence until next cycle
+    digitalWrite(PIN_LED, LOW);
+    digitalWrite(PIN_BUZZER, LOW);
   }
 }
 
 // ==========================================
-// 10. WIFI CONNECTION
+// 6. SUPABASE DISPATCH
+// ==========================================
+bool sendTelemetryToSupabase(
+  float temp, float humid,
+  float mq2, float mq7, float mq135,
+  double lat, double lng,
+  float accel, bool fall, int inactivitySecs,
+  int sats, float hdop, bool gpsFix,
+  const String& alertLevel
+) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[Supabase] Skipped — WiFi not connected.");
+    return false;
+  }
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(12);
+
+  HTTPClient http;
+  bool beginOk = http.begin(client, SUPABASE_URL);
+  if (!beginOk) {
+    http.begin(SUPABASE_URL);
+  }
+  http.setTimeout(10000);
+
+  http.addHeader("Content-Type",  "application/json");
+  http.addHeader("apikey",        SUPABASE_KEY);
+  http.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+  http.addHeader("Prefer",        "return=minimal");
+
+  String body = "{";
+  body += "\"worker_id\":\""       + String(WORKER_ID)               + "\",";
+  body += "\"temperature\":"       + String(temp, 2)                 + ",";
+  body += "\"humidity\":"          + String(humid, 2)                + ",";
+  body += "\"mq2_smoke\":"         + String(mq2, 2)                  + ",";
+  body += "\"mq7_co\":"            + String(mq7, 2)                  + ",";
+  body += "\"mq135_air\":"         + String(mq135, 2)                + ",";
+  body += "\"mq3_gas\":"           + String(mq2, 2)                  + ","; // Backwards compatibility
+  body += "\"latitude\":"          + String(lat, 6)                  + ",";
+  body += "\"longitude\":"         + String(lng, 6)                  + ",";
+  body += "\"accel_total\":"       + String(accel, 2)                + ",";
+  body += "\"is_fall\":"           + String(fall ? "true" : "false") + ",";
+  body += "\"inactivity_secs\":"   + String(inactivitySecs)          + ",";
+  body += "\"gps_satellites\":"    + String(sats)                    + ",";
+  body += "\"gps_hdop\":"          + String(hdop, 1)                 + ",";
+  body += "\"gps_fix\":"           + String(gpsFix ? "true" : "false") + ",";
+  body += "\"alert_level\":\""     + alertLevel                      + "\"";
+  body += "}";
+
+  int httpCode = http.POST(body);
+
+  if (httpCode >= 200 && httpCode < 300) {
+    Serial.printf("[Supabase] Success (HTTP %d)\n", httpCode);
+    http.end();
+    return true;
+  }
+
+  if (httpCode > 0) {
+    String response = http.getString();
+    Serial.printf("[Supabase] FAILED (HTTP %d): %s\n", httpCode, response.c_str());
+  } else {
+    Serial.printf("[Supabase] Network Error: %s (code %d)\n", http.errorToString(httpCode).c_str(), httpCode);
+  }
+
+  http.end();
+  return false;
+}
+
+// ==========================================
+// 7. WIFI CONNECTION (With Google DNS Fallback)
 // ==========================================
 void connectWiFi() {
-  Serial.printf("[WiFi] Connecting to: %s\n", WIFI_SSID);
+  Serial.printf("\n[WiFi] Connecting to: %s\n", WIFI_SSID);
   WiFi.mode(WIFI_STA);
+
+  // Set Google Public DNS to avoid mobile hotspot / router DNS resolution failures
+  IPAddress dns1(8, 8, 8, 8);
+  IPAddress dns2(8, 8, 4, 4);
+  WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, dns1, dns2);
+
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   int timeout = 0;
@@ -351,53 +247,170 @@ void connectWiFi() {
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("[WiFi] Connected! IP: %s\n", WiFi.localIP().toString().c_str());
   } else {
-    Serial.println("[WiFi] Connection failed. Running in offline/standalone alert mode.");
+    Serial.println("[WiFi] Connection failed. Check SSID & password.");
   }
 }
 
 // ==========================================
-// 11. SUPABASE REST API DISPATCH
+// 8. SETUP
 // ==========================================
-void sendTelemetryToSupabase(
-  float temp, float humid, float mq7, float mq135, float mq3,
-  double lat, double lng, float accel,
-  bool fall, int inactivitySecs,
-  int sats, float hdop, bool gpsFix,
-  const char* status
-) {
-  if (WiFi.status() != WL_CONNECTED) return;
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("\n[MineGuard] ============================================");
+  Serial.println("[MineGuard] Smart Safety Helmet All-In-One System Booting...");
+  Serial.println("[MineGuard] ============================================");
 
-  HTTPClient http;
-  http.begin(SUPABASE_URL);
-  http.addHeader("Content-Type",  "application/json");
-  http.addHeader("apikey",        SUPABASE_KEY);
-  http.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
-  http.addHeader("Prefer",        "return=minimal");
+  pinMode(PIN_BUZZER, OUTPUT);
+  pinMode(PIN_LED,    OUTPUT);
+  digitalWrite(PIN_BUZZER, LOW);
+  digitalWrite(PIN_LED,    LOW);
 
-  String body = "{";
-  body += "\"worker_id\":\""     + String(WORKER_ID)            + "\",";
-  body += "\"temperature\":"     + String(temp, 2)               + ",";
-  body += "\"humidity\":"        + String(humid, 2)              + ",";
-  body += "\"mq7_co\":"          + String(mq7, 1)                + ",";
-  body += "\"mq135_air\":"       + String(mq135, 1)              + ",";
-  body += "\"mq3_gas\":"         + String(mq3, 3)                + ",";
-  body += "\"latitude\":"        + String(lat, 6)                + ",";
-  body += "\"longitude\":"       + String(lng, 6)                + ",";
-  body += "\"accel_total\":"     + String(accel, 2)              + ",";
-  body += "\"is_fall\":"         + String(fall ? "true":"false") + ",";
-  body += "\"inactivity_secs\":" + String(inactivitySecs)        + ",";
-  body += "\"gps_satellites\":"  + String(sats)                  + ",";
-  body += "\"gps_hdop\":"        + String(hdop, 1)               + ",";
-  body += "\"gps_fix\":"         + String(gpsFix ? "true":"false") + ",";
-  body += "\"alert_level\":\""   + String(status)                + "\"";
-  body += "}";
+  // 1. DHT11
+  dht.begin();
+  Serial.println("[Init] DHT11 Initialized on GPIO 4.");
 
-  int httpCode = http.POST(body);
-  if (httpCode >= 200 && httpCode < 300) {
-    Serial.println("[Supabase] Telemetry sent OK.");
+  // 2. GPS NEO-6M
+  gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+  delay(100);
+  Serial.printf("[Init] GPS Neo-6M on RX=GPIO%d (RX2), TX=GPIO%d (TX2) @ %d baud\n",
+                GPS_RX_PIN, GPS_TX_PIN, GPS_BAUD);
+
+  // 3. MPU-6050 (Auto-detected on I2C)
+  Wire.begin(21, 22);
+  if (!mpu.begin()) {
+    Serial.println("[Init] Note: MPU-6050 not detected. Continuing with other sensors.");
+    mpuAvailable = false;
   } else {
-    Serial.printf("[Supabase] POST failed. HTTP %d\n", httpCode);
-    Serial.println("[Supabase] Response: " + http.getString());
+    mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+    mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+    mpuAvailable = true;
+    Serial.println("[Init] MPU-6050 Motion Sensor Initialized on SDA:21, SCL:22.");
   }
-  http.end();
+
+  // 4. WiFi
+  connectWiFi();
+
+  lastMotionDetectedTime = millis();
+  buzzerPatternStart     = millis();
+  lastTelemetryUpload    = millis();
+
+  Serial.println("[Init] Boot complete. Entering live monitoring loop.\n");
+}
+
+// ==========================================
+// 9. MAIN LOOP
+// ==========================================
+void loop() {
+
+  // 1. Feed GPS stream to TinyGPSPlus
+  while (gpsSerial.available() > 0) {
+    gps.encode(gpsSerial.read());
+  }
+
+  // 2. Motion & Fall Detection (MPU-6050)
+  float totalAccelG = 1.0;
+  if (mpuAvailable) {
+    sensors_event_t a, g_ev, temp_mpu;
+    if (mpu.getEvent(&a, &g_ev, &temp_mpu)) {
+      float ax = a.acceleration.x / 9.80665;
+      float ay = a.acceleration.y / 9.80665;
+      float az = a.acceleration.z / 9.80665;
+      totalAccelG = sqrt(ax * ax + ay * ay + az * az);
+
+      if (totalAccelG >= FALL_THRESHOLD_G) {
+        isFallTriggered = true;
+        Serial.printf("[ALERT] Fall Shock Impact Detected: %.2f G!\n", totalAccelG);
+      }
+      if (fabs(totalAccelG - 1.0) > 0.15) {
+        lastMotionDetectedTime = millis(); // Reset inactivity timer on movement
+      }
+    }
+  }
+
+  unsigned long inactivityDuration = millis() - lastMotionDetectedTime;
+  bool isInactiveAlarm = (inactivityDuration >= INACTIVITY_LIMIT_MS);
+
+  // 3. Continuous buzzer pattern if dangerous state
+  if (prevDanger) {
+    runDangerBuzzerPattern();
+  }
+
+  // 4. Telemetry Read & Upload Cycle (every 3 seconds)
+  if (millis() - lastTelemetryUpload >= UPLOAD_INTERVAL_MS) {
+    lastTelemetryUpload = millis();
+
+    // Read Climate (DHT11)
+    float temperature = dht.readTemperature();
+    float humidity    = dht.readHumidity();
+    if (isnan(temperature)) temperature = 27.5;
+    if (isnan(humidity))    humidity    = 60.0;
+
+    // Read Gas Array (MQ-2, MQ-7, MQ-135)
+    float mq2PPM   = readMQ(PIN_MQ2,   MQ2_SCALE);
+    float mq7PPM   = readMQ(PIN_MQ7,   MQ7_SCALE);
+    float mq135PPM = readMQ(PIN_MQ135, MQ135_SCALE);
+
+    // Read GPS Telemetry
+    double currentLat = MINE_CENTER_LAT;
+    double currentLng = MINE_CENTER_LNG;
+    int    gpsSats    = 0;
+    float  gpsHDOP    = 99.9;
+    bool   gpsFixed   = gps.location.isValid() && (gps.location.age() < 5000);
+
+    if (gpsFixed) {
+      currentLat = gps.location.lat();
+      currentLng = gps.location.lng();
+      gpsSats    = (int)gps.satellites.value();
+      gpsHDOP    = (float)gps.hdop.hdop();
+    }
+
+    // Geofencing Check (when fix acquired)
+    double distFromBase = calculateDistanceMeters(currentLat, currentLng, MINE_CENTER_LAT, MINE_CENTER_LNG);
+    isGeofenceBreached  = gpsFixed && (distFromBase > SAFE_RADIUS_METERS);
+
+    // Hazard Level Evaluation
+    bool isDanger = (temperature  >= TEMP_DANGER_C)   ||
+                    (humidity     >= HUMID_DANGER)    ||
+                    (mq2PPM       >= MQ2_DANGER_PPM)  ||
+                    (mq7PPM       >= MQ7_DANGER_PPM)  ||
+                    (mq135PPM     >= MQ135_DANGER_PPM)||
+                    isFallTriggered || isInactiveAlarm || isGeofenceBreached;
+
+    bool isWarning = (temperature  >= TEMP_WARNING_C)  ||
+                     (mq2PPM       >= MQ2_WARNING_PPM) ||
+                     (mq7PPM       >= MQ7_WARNING_PPM) ||
+                     (mq135PPM     >= MQ135_WARNING_PPM);
+
+    String alertLevel = isDanger ? "DANGER" : (isWarning ? "WARNING" : "SAFE");
+
+    // Local Alarm Indicators
+    handleBuzzerAndLED(alertLevel);
+    prevDanger = isDanger;
+
+    // Print summary to Serial Monitor
+    Serial.printf("[Sensors] Temp: %.1f C | Hum: %.1f %% | MQ-2: %.0f PPM | MQ-7: %.0f PPM | MQ-135: %.0f PPM\n",
+                  temperature, humidity, mq2PPM, mq7PPM, mq135PPM);
+    Serial.printf("[GPS]     Lat: %.6f, Lng: %.6f | Sats: %d | HDOP: %.1f | Fix: %s\n",
+                  currentLat, currentLng, gpsSats, gpsHDOP, gpsFixed ? "YES" : "NO");
+    if (mpuAvailable) {
+      Serial.printf("[Motion]  Accel: %.2f G | Inactivity: %lu s | Fall: %s\n",
+                    totalAccelG, inactivityDuration / 1000, isFallTriggered ? "YES" : "NO");
+    }
+    Serial.printf("[Status]  Alert Level: %s\n", alertLevel.c_str());
+
+    // Send payload to Supabase
+    bool ok = sendTelemetryToSupabase(
+      temperature, humidity, mq2PPM, mq7PPM, mq135PPM,
+      currentLat, currentLng, totalAccelG,
+      isFallTriggered, (int)(inactivityDuration / 1000),
+      gpsSats, gpsHDOP, gpsFixed,
+      alertLevel
+    );
+
+    // Reset one-shot fall flag after reporting
+    isFallTriggered = false;
+    Serial.println("─────────────────────────────────────────────────────────");
+  }
 }
